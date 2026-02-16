@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -8,69 +10,82 @@ import (
 	"github.com/google/uuid"
 )
 
-type TokenPair struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-}
-
 type Claims struct {
-	UserID uint   `json:"user_id"`
-	Role   string `json:"role"`
+	UserID       uint `json:"userId"`
+	IsSuperAdmin bool `json:"isSuperAdmin"`
 	jwt.RegisteredClaims
 }
 
-func GenerateTokenPair(userID uint, role string, accessSecret, refreshSecret string, accessExpiry, refreshExpiry time.Duration) (*TokenPair, error) {
+func GenerateAccessToken(userID uint, isSuperAdmin bool, secret string, expiry time.Duration) (string, error) {
 	now := time.Now()
 
-	// Access token
-	accessClaims := &Claims{
-		UserID: userID,
-		Role:   role,
+	claims := &Claims{
+		UserID:       userID,
+		IsSuperAdmin: isSuperAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(now.Add(accessExpiry)),
+			ExpiresAt: jwt.NewNumericDate(now.Add(expiry)),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ID:        uuid.New().String(),
 		},
 	}
-	accessToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, accessClaims).SignedString([]byte(accessSecret))
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signedToken, err := token.SignedString([]byte(secret))
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign access token: %w", err)
+		return "", fmt.Errorf("failed to sign access token: %w", err)
 	}
 
-	// Refresh token
-	refreshClaims := &Claims{
-		UserID: userID,
-		Role:   role,
-		RegisteredClaims: jwt.RegisteredClaims{
-			ExpiresAt: jwt.NewNumericDate(now.Add(refreshExpiry)),
-			IssuedAt:  jwt.NewNumericDate(now),
-			ID:        uuid.New().String(),
-		},
-	}
-	refreshToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, refreshClaims).SignedString([]byte(refreshSecret))
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign refresh token: %w", err)
-	}
-
-	return &TokenPair{
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-	}, nil
+	return signedToken, nil
 }
 
-func ValidateToken(tokenStr string, secret string) (*Claims, error) {
+func GenerateRefreshToken(userID uint, isSuperAdmin bool, secret string, expiry time.Duration) (string, error) {
+	now := time.Now()
+
+	claims := &Claims{
+		UserID:       userID,
+		IsSuperAdmin: isSuperAdmin,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(now.Add(expiry)),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ID:        uuid.New().String(),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	signedToken, err := token.SignedString([]byte(secret))
+	if err != nil {
+		return "", fmt.Errorf("failed to sign refresh token: %w", err)
+	}
+
+	return signedToken, nil
+}
+
+func ValidateToken(tokenString string, secret string) (*Claims, error) {
 	claims := &Claims{}
-	token, err := jwt.ParseWithClaims(tokenStr, claims, func(t *jwt.Token) (interface{}, error) {
+
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return []byte(secret), nil
 	})
+
 	if err != nil {
 		return nil, fmt.Errorf("invalid token: %w", err)
 	}
+
 	if !token.Valid {
 		return nil, fmt.Errorf("token is not valid")
 	}
+
 	return claims, nil
+}
+
+func GenerateResetToken() (string, error) {
+	bytes := make([]byte, 32)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", fmt.Errorf("failed to generate reset token: %w", err)
+	}
+
+	return hex.EncodeToString(bytes), nil
 }

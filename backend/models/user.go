@@ -5,12 +5,16 @@ import (
 )
 
 type User struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	Name      string    `gorm:"not null" json:"name"`
-	Email     string    `gorm:"uniqueIndex;not null" json:"email"`
-	Password  string    `gorm:"not null" json:"-"`
-	Role      string    `gorm:"default:admin;not null" json:"role"`
-	IsActive  bool      `gorm:"default:true" json:"is_active"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             uint      `json:"id" gorm:"primaryKey"`
+	Name           string    `json:"name" gorm:"not null"`
+	Email          string    `json:"email" gorm:"uniqueIndex;not null"`
+	Phone          string    `json:"phone,omitempty"`
+	Address        string    `json:"address,omitempty"`
+	PasswordHash   string    `json:"-" gorm:"column:password_hash;not null"`
+	ProfilePicture *string   `json:"profilePicture,omitempty" gorm:"column:profile_picture"`
+	Status         string    `json:"status" gorm:"default:active;not null"`
+	IsSuperAdmin   bool      `json:"isSuperAdmin" gorm:"column:is_super_admin;default:false"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
+	Roles          []Role    `json:"roles,omitempty" gorm:"many2many:user_roles;"`
 }

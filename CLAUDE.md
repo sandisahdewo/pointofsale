@@ -198,14 +198,47 @@ backend/
 └── go.mod
 ```
 
-## TDD Methodology
+## TDD Methodology — MANDATORY
 
-**Every feature MUST follow strict Test-Driven Development:**
+**STRICT RULE: Tests MUST be written BEFORE implementation code. No exceptions.**
 
-### Red-Green-Refactor Cycle
-1. **RED**: Write a failing test that defines the expected behavior
-2. **GREEN**: Write the minimum code to make the test pass
-3. **REFACTOR**: Clean up the code while keeping tests green
+You are FORBIDDEN from writing implementation code first. The workflow is always: test first, then code. If you catch yourself about to write a handler, service, repository, or utility function — STOP. Write the test for it first.
+
+### Red-Green-Refactor Cycle (follow this EXACTLY)
+
+**Step 1 — RED (write the test FIRST):**
+- Write a `_test.go` file with test cases that define the expected behavior
+- The test MUST reference functions/types/endpoints that DO NOT EXIST yet
+- Run the test with `go test` — it MUST FAIL (compile error or assertion failure)
+- If the test passes, you wrote it wrong — the behavior already exists or the test is trivial
+
+**Step 2 — GREEN (write the MINIMUM implementation):**
+- ONLY NOW write the production code (handler, service, repository, etc.)
+- Write just enough code to make the failing test pass — nothing more
+- Run the test again — it MUST PASS now
+- Do NOT add extra features, edge case handling, or optimizations not covered by a test
+
+**Step 3 — REFACTOR (clean up while green):**
+- Clean up code (rename, extract, simplify) while keeping all tests passing
+- Run tests after each refactor to confirm nothing broke
+
+### Workflow Per Feature (step by step)
+
+For each new feature (e.g., "Create Category endpoint"), do this:
+
+1. **Write the test file** (e.g., `handlers/category_test.go`) with all test cases
+2. **Run the test** — confirm it fails (RED)
+3. **Write the model** if needed (only what the test requires)
+4. **Write the repository/service/handler** — only enough to pass the test
+5. **Run the test** — confirm it passes (GREEN)
+6. **Refactor** if needed, run tests again
+7. **Repeat** for the next test case or feature
+
+### NEVER do these:
+- Write a complete handler/service file and then write tests after
+- Write tests and implementation in the same step without running the test in between
+- Skip the RED step (you MUST see the test fail before writing implementation)
+- Write implementation code "to save time" and add tests later
 
 ### Test Layers (write in this order per feature)
 

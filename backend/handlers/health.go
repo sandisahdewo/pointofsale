@@ -26,17 +26,17 @@ func (h *HealthHandler) Health(w http.ResponseWriter, r *http.Request) {
 	// Check database
 	sqlDB, err := h.db.DB()
 	if err != nil {
-		utils.Error(w, http.StatusServiceUnavailable, "database connection error")
+		utils.Error(w, http.StatusServiceUnavailable, "database connection error", "DB_ERROR")
 		return
 	}
 	if err := sqlDB.PingContext(ctx); err != nil {
-		utils.Error(w, http.StatusServiceUnavailable, "database ping failed")
+		utils.Error(w, http.StatusServiceUnavailable, "database ping failed", "DB_ERROR")
 		return
 	}
 
 	// Check Redis
 	if err := h.rdb.Ping(ctx).Err(); err != nil {
-		utils.Error(w, http.StatusServiceUnavailable, "redis ping failed")
+		utils.Error(w, http.StatusServiceUnavailable, "redis ping failed", "REDIS_ERROR")
 		return
 	}
 

@@ -9,7 +9,7 @@ import (
 	"github.com/pointofsale/backend/middleware"
 )
 
-func Setup(r chi.Router, healthHandler *handlers.HealthHandler, authHandler *handlers.AuthHandler, cfg *config.Config) {
+func Setup(r chi.Router, healthHandler *handlers.HealthHandler, authHandler *handlers.AuthHandler, authMiddleware *middleware.AuthMiddleware, cfg *config.Config) {
 	// Global middleware
 	r.Use(chiMiddleware.Recoverer)
 	r.Use(middleware.RequestID)
@@ -30,15 +30,24 @@ func Setup(r chi.Router, healthHandler *handlers.HealthHandler, authHandler *han
 	r.Route("/api/v1", func(r chi.Router) {
 		// Auth routes (public)
 		r.Route("/auth", func(r chi.Router) {
+			// Public auth routes
 			r.Post("/register", authHandler.Register)
 			r.Post("/login", authHandler.Login)
 			r.Post("/refresh", authHandler.Refresh)
-			r.Post("/logout", authHandler.Logout)
+			r.Post("/forgot-password", authHandler.ForgotPassword)
+			r.Post("/reset-password", authHandler.ResetPassword)
+
+			// Protected auth routes (require authentication)
+			r.Group(func(r chi.Router) {
+				r.Use(authMiddleware.Authenticate)
+				r.Post("/logout", authHandler.Logout)
+				r.Get("/me", authHandler.GetMe)
+			})
 		})
 
-		// Protected routes (require auth)
+		// Other protected routes (require auth)
 		r.Group(func(r chi.Router) {
-			r.Use(middleware.Auth(cfg.JWTAccessSecret))
+			r.Use(authMiddleware.Authenticate)
 			// Future protected endpoints go here
 		})
 	})

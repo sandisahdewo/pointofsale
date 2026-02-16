@@ -16,6 +16,7 @@ import (
 
 	"github.com/pointofsale/backend/config"
 	"github.com/pointofsale/backend/handlers"
+	"github.com/pointofsale/backend/middleware"
 	"github.com/pointofsale/backend/repositories"
 	"github.com/pointofsale/backend/routes"
 	"github.com/pointofsale/backend/seeds"
@@ -73,15 +74,24 @@ func main() {
 	}
 	slog.Info("connected to Redis")
 
-	// Initialize layers
+	// Initialize repositories
 	userRepo := repositories.NewUserRepository(db)
-	authService := services.NewAuthService(userRepo, rdb, cfg)
+
+	// Initialize services
+	// Email service is nil for now (will be implemented later)
+	var emailService services.EmailService = nil
+	authService := services.NewAuthService(userRepo, rdb, cfg, emailService)
+
+	// Initialize middleware
+	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTAccessSecret, rdb, userRepo)
+
+	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(db, rdb)
 	authHandler := handlers.NewAuthHandler(authService)
 
 	// Setup router and routes
 	r := chi.NewRouter()
-	routes.Setup(r, healthHandler, authHandler, cfg)
+	routes.Setup(r, healthHandler, authHandler, authMiddleware, cfg)
 
 	// Start server
 	addr := fmt.Sprintf(":%s", cfg.AppPort)

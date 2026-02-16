@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/pointofsale/backend/middleware"
 	"github.com/pointofsale/backend/services"
 	"github.com/pointofsale/backend/utils"
 )
@@ -17,100 +18,84 @@ func NewAuthHandler(authService *services.AuthService) *AuthHandler {
 	return &AuthHandler{authService: authService}
 }
 
-type registerRequest struct {
-	Name     string `json:"name"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Role     string `json:"role"`
-}
-
-type loginRequest struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-type refreshRequest struct {
-	RefreshToken string `json:"refresh_token"`
-}
-
-type logoutRequest struct {
-	RefreshToken string `json:"refresh_token"`
-}
-
+// Register handles user registration
 func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
-	var req registerRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.Error(w, http.StatusBadRequest, "invalid request body")
+	var input services.RegisterInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		utils.Error(w, http.StatusBadRequest, "Invalid request body", "VALIDATION_ERROR")
 		return
 	}
 
-	if req.Name == "" || req.Email == "" || req.Password == "" {
-		utils.Error(w, http.StatusBadRequest, "name, email and password are required")
+	user, serviceErr := h.authService.Register(input)
+	if serviceErr != nil {
+		// Map service error to HTTP status code
+		status := http.StatusInternalServerError
+		switch serviceErr.Err {
+		case services.ErrValidation:
+			status = http.StatusBadRequest
+		case services.ErrConflict:
+			status = http.StatusConflict
+		}
+		utils.Error(w, status, serviceErr.Message, serviceErr.Code)
 		return
 	}
 
-	if req.Role == "" {
-		req.Role = "cashier"
-	}
-
-	user, err := h.authService.Register(req.Name, req.Email, req.Password, req.Role)
-	if err != nil {
-		utils.Error(w, http.StatusConflict, err.Error())
-		return
-	}
-
-	utils.Success(w, http.StatusCreated, "user registered successfully", user)
+	utils.Success(w, http.StatusCreated, "Registration successful. Please wait for admin approval.", user)
 }
 
+// Login handles user authentication
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
-	var req loginRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.Error(w, http.StatusBadRequest, "invalid request body")
+	var input services.LoginInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		utils.Error(w, http.StatusBadRequest, "Invalid request body", "VALIDATION_ERROR")
 		return
 	}
 
-	if req.Email == "" || req.Password == "" {
-		utils.Error(w, http.StatusBadRequest, "email and password are required")
+	loginResp, serviceErr := h.authService.Login(input)
+	if serviceErr != nil {
+		// Map service error to HTTP status code
+		status := http.StatusInternalServerError
+		switch serviceErr.Err {
+		case services.ErrValidation:
+			status = http.StatusBadRequest
+		case services.ErrUnauthorized:
+			status = http.StatusUnauthorized
+		case services.ErrForbidden:
+			status = http.StatusForbidden
+		}
+		utils.Error(w, status, serviceErr.Message, serviceErr.Code)
 		return
 	}
 
-	tokens, err := h.authService.Login(req.Email, req.Password)
-	if err != nil {
-		utils.Error(w, http.StatusUnauthorized, err.Error())
-		return
-	}
-
-	utils.Success(w, http.StatusOK, "login successful", tokens)
+	utils.Success(w, http.StatusOK, "Login successful", loginResp)
 }
 
+// Refresh handles token refresh
 func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
-	var req refreshRequest
+	var req struct {
+		RefreshToken string `json:"refreshToken"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.Error(w, http.StatusBadRequest, "invalid request body")
+		utils.Error(w, http.StatusBadRequest, "Invalid request body", "VALIDATION_ERROR")
 		return
 	}
 
 	if req.RefreshToken == "" {
-		utils.Error(w, http.StatusBadRequest, "refresh_token is required")
+		utils.Error(w, http.StatusBadRequest, "Refresh token is required", "VALIDATION_ERROR")
 		return
 	}
 
-	tokens, err := h.authService.Refresh(req.RefreshToken)
-	if err != nil {
-		utils.Error(w, http.StatusUnauthorized, err.Error())
+	tokenPair, serviceErr := h.authService.RefreshToken(req.RefreshToken)
+	if serviceErr != nil {
+		utils.Error(w, http.StatusUnauthorized, serviceErr.Message, serviceErr.Code)
 		return
 	}
 
-	utils.Success(w, http.StatusOK, "token refreshed successfully", tokens)
+	utils.Success(w, http.StatusOK, "Token refreshed successfully", tokenPair)
 }
 
+// Logout handles user logout (requires authentication)
 func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
-	var req logoutRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		utils.Error(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
 	// Extract access token from Authorization header
 	accessToken := ""
 	authHeader := r.Header.Get("Authorization")
@@ -121,10 +106,80 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := h.authService.Logout(accessToken, req.RefreshToken); err != nil {
-		utils.Error(w, http.StatusInternalServerError, "logout failed")
+	// Extract refresh token from request body
+	var req struct {
+		RefreshToken string `json:"refreshToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.Error(w, http.StatusBadRequest, "Invalid request body", "VALIDATION_ERROR")
 		return
 	}
 
-	utils.Success(w, http.StatusOK, "logged out successfully", nil)
+	// Call logout service (always returns nil currently)
+	_ = h.authService.Logout(accessToken, req.RefreshToken)
+
+	utils.Success(w, http.StatusOK, "Logged out successfully", nil)
+}
+
+// ForgotPassword handles password reset request
+func (h *AuthHandler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		utils.Error(w, http.StatusBadRequest, "Invalid request body", "VALIDATION_ERROR")
+		return
+	}
+
+	// Always returns nil to avoid email enumeration
+	_ = h.authService.ForgotPassword(req.Email)
+
+	utils.Success(w, http.StatusOK, "If the email exists, a reset link has been sent.", nil)
+}
+
+// ResetPassword handles password reset with token
+func (h *AuthHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
+	var input services.ResetPasswordInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		utils.Error(w, http.StatusBadRequest, "Invalid request body", "VALIDATION_ERROR")
+		return
+	}
+
+	serviceErr := h.authService.ResetPassword(input)
+	if serviceErr != nil {
+		// Map service error to HTTP status code
+		status := http.StatusInternalServerError
+		switch serviceErr.Err {
+		case services.ErrValidation:
+			status = http.StatusBadRequest
+		case services.ErrUnauthorized:
+			status = http.StatusUnauthorized
+		}
+		utils.Error(w, status, serviceErr.Message, serviceErr.Code)
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "Password reset successfully. Please login with your new password.", nil)
+}
+
+// GetMe returns the current authenticated user's details (requires authentication)
+func (h *AuthHandler) GetMe(w http.ResponseWriter, r *http.Request) {
+	// Get user ID from context (set by auth middleware)
+	userID := middleware.GetUserID(r.Context())
+	if userID == 0 {
+		utils.Error(w, http.StatusUnauthorized, "User not authenticated", "UNAUTHORIZED")
+		return
+	}
+
+	currentUser, serviceErr := h.authService.GetCurrentUser(userID)
+	if serviceErr != nil {
+		status := http.StatusInternalServerError
+		if serviceErr.Err == services.ErrNotFound {
+			status = http.StatusNotFound
+		}
+		utils.Error(w, status, serviceErr.Message, serviceErr.Code)
+		return
+	}
+
+	utils.Success(w, http.StatusOK, "", currentUser)
 }

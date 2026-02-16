@@ -5,34 +5,39 @@ import (
 	"net/http"
 )
 
-type APIResponse struct {
-	Success bool        `json:"success"`
+// SuccessResponse represents a successful API response
+type SuccessResponse struct {
+	Data    interface{} `json:"data"`
 	Message string      `json:"message,omitempty"`
-	Data    interface{} `json:"data,omitempty"`
 }
 
-type APIError struct {
-	Success bool   `json:"success"`
-	Error   string `json:"error"`
+// ErrorResponse represents an error API response
+type ErrorResponse struct {
+	Error string `json:"error"`
+	Code  string `json:"code"`
 }
 
+// JSON writes a JSON response with the given status code
 func JSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(data)
 }
 
+// Success writes a successful JSON response
+// Format: {"data": {...}, "message": "optional"}
 func Success(w http.ResponseWriter, status int, message string, data interface{}) {
-	JSON(w, status, APIResponse{
-		Success: true,
-		Message: message,
+	JSON(w, status, SuccessResponse{
 		Data:    data,
+		Message: message,
 	})
 }
 
-func Error(w http.ResponseWriter, status int, message string) {
-	JSON(w, status, APIError{
-		Success: false,
-		Error:   message,
+// Error writes an error JSON response
+// Format: {"error": "message", "code": "ERROR_CODE"}
+func Error(w http.ResponseWriter, status int, message string, code string) {
+	JSON(w, status, ErrorResponse{
+		Error: message,
+		Code:  code,
 	})
 }

@@ -1,0 +1,238 @@
+{
+	"_type": "export",
+	"__export_format": 4,
+	"__export_date": "2026-02-16T00:00:00.000Z",
+	"__export_source": "insomnia.importers",
+	"resources": [
+		{
+			"_id": "wrk_pos",
+			"parentId": null,
+			"modified": 1739664000000,
+			"created": 1739664000000,
+			"name": "Point of Sale API",
+			"description": "Point of Sale Backend API Collection",
+			"scope": "collection",
+			"_type": "workspace"
+		},
+		{
+			"_id": "env_base",
+			"parentId": "wrk_pos",
+			"modified": 1739664000000,
+			"created": 1739664000000,
+			"name": "Base Environment",
+			"data": {
+				"base_url": "http://localhost:8080",
+				"access_token": "",
+				"refresh_token": ""
+			},
+			"dataPropertyOrder": {
+				"&": ["base_url", "access_token", "refresh_token"]
+			},
+			"_type": "environment"
+		},
+		{
+			"_id": "fld_health",
+			"parentId": "wrk_pos",
+			"modified": 1739664000000,
+			"created": 1739664000000,
+			"name": "Health",
+			"description": "Health check endpoints",
+			"_type": "request_group"
+		},
+		{
+			"_id": "fld_auth_public",
+			"parentId": "wrk_pos",
+			"modified": 1739664000000,
+			"created": 1739664000000,
+			"name": "Auth (Public)",
+			"description": "Public authentication endpoints (no token required)",
+			"_type": "request_group"
+		},
+		{
+			"_id": "fld_auth_protected",
+			"parentId": "wrk_pos",
+			"modified": 1739664000000,
+			"created": 1739664000000,
+			"name": "Auth (Protected)",
+			"description": "Protected authentication endpoints (token required)",
+			"_type": "request_group"
+		},
+		{
+			"_id": "req_health",
+			"parentId": "fld_health",
+			"modified": 1739664000000,
+			"created": 1739664000000,
+			"name": "Health Check",
+			"description": "Check API, database, and Redis connectivity",
+			"url": "{{ _.base_url }}/health",
+			"method": "GET",
+			"headers": [],
+			"parameters": [],
+			"authentication": {},
+			"body": {},
+			"_type": "request"
+		},
+		{
+			"_id": "req_register",
+			"parentId": "fld_auth_public",
+			"modified": 1739664000000,
+			"created": 1739664000000,
+			"name": "Register",
+			"description": "Register a new user account. New accounts are created with 'pending' status and require admin approval.",
+			"url": "{{ _.base_url }}/api/v1/auth/register",
+			"method": "POST",
+			"headers": [
+				{
+					"name": "Content-Type",
+					"value": "application/json"
+				}
+			],
+			"parameters": [],
+			"authentication": {},
+			"body": {
+				"mimeType": "application/json",
+				"text": "{\n\t\"name\": \"John Doe\",\n\t\"email\": \"john@example.com\",\n\t\"password\": \"Password@123\",\n\t\"confirmPassword\": \"Password@123\"\n}"
+			},
+			"_type": "request"
+		},
+		{
+			"_id": "req_login",
+			"parentId": "fld_auth_public",
+			"modified": 1739664000000,
+			"created": 1739664000000,
+			"name": "Login",
+			"description": "Authenticate with email and password. Returns access token (15min), refresh token (7d), and user data. Only 'active' users can log in.\n\nDefault super admin: admin@pointofsale.com / Admin@12345",
+			"url": "{{ _.base_url }}/api/v1/auth/login",
+			"method": "POST",
+			"headers": [
+				{
+					"name": "Content-Type",
+					"value": "application/json"
+				}
+			],
+			"parameters": [],
+			"authentication": {},
+			"body": {
+				"mimeType": "application/json",
+				"text": "{\n\t\"email\": \"admin@pointofsale.com\",\n\t\"password\": \"Admin@12345\"\n}"
+			},
+			"_type": "request"
+		},
+		{
+			"_id": "req_refresh",
+			"parentId": "fld_auth_public",
+			"modified": 1739664000000,
+			"created": 1739664000000,
+			"name": "Refresh Token",
+			"description": "Exchange a valid refresh token for a new access/refresh token pair. The old refresh token is invalidated.",
+			"url": "{{ _.base_url }}/api/v1/auth/refresh",
+			"method": "POST",
+			"headers": [
+				{
+					"name": "Content-Type",
+					"value": "application/json"
+				}
+			],
+			"parameters": [],
+			"authentication": {},
+			"body": {
+				"mimeType": "application/json",
+				"text": "{\n\t\"refreshToken\": \"{{ _.refresh_token }}\"\n}"
+			},
+			"_type": "request"
+		},
+		{
+			"_id": "req_forgot_password",
+			"parentId": "fld_auth_public",
+			"modified": 1739664000000,
+			"created": 1739664000000,
+			"name": "Forgot Password",
+			"description": "Request a password reset link. Always returns 200 to prevent email enumeration. If the email exists, a reset token is stored in Redis (1 hour TTL).",
+			"url": "{{ _.base_url }}/api/v1/auth/forgot-password",
+			"method": "POST",
+			"headers": [
+				{
+					"name": "Content-Type",
+					"value": "application/json"
+				}
+			],
+			"parameters": [],
+			"authentication": {},
+			"body": {
+				"mimeType": "application/json",
+				"text": "{\n\t\"email\": \"admin@pointofsale.com\"\n}"
+			},
+			"_type": "request"
+		},
+		{
+			"_id": "req_reset_password",
+			"parentId": "fld_auth_public",
+			"modified": 1739664000000,
+			"created": 1739664000000,
+			"name": "Reset Password",
+			"description": "Reset password using a token from the forgot-password flow. The token is single-use and all existing refresh tokens for the user are invalidated.",
+			"url": "{{ _.base_url }}/api/v1/auth/reset-password",
+			"method": "POST",
+			"headers": [
+				{
+					"name": "Content-Type",
+					"value": "application/json"
+				}
+			],
+			"parameters": [],
+			"authentication": {},
+			"body": {
+				"mimeType": "application/json",
+				"text": "{\n\t\"token\": \"paste-reset-token-here\",\n\t\"password\": \"NewPassword@456\",\n\t\"confirmPassword\": \"NewPassword@456\"\n}"
+			},
+			"_type": "request"
+		},
+		{
+			"_id": "req_logout",
+			"parentId": "fld_auth_protected",
+			"modified": 1739664000000,
+			"created": 1739664000000,
+			"name": "Logout",
+			"description": "Invalidate the current access and refresh tokens. Both tokens are blacklisted in Redis.",
+			"url": "{{ _.base_url }}/api/v1/auth/logout",
+			"method": "POST",
+			"headers": [
+				{
+					"name": "Content-Type",
+					"value": "application/json"
+				},
+				{
+					"name": "Authorization",
+					"value": "Bearer {{ _.access_token }}"
+				}
+			],
+			"parameters": [],
+			"authentication": {},
+			"body": {
+				"mimeType": "application/json",
+				"text": "{\n\t\"refreshToken\": \"{{ _.refresh_token }}\"\n}"
+			},
+			"_type": "request"
+		},
+		{
+			"_id": "req_me",
+			"parentId": "fld_auth_protected",
+			"modified": 1739664000000,
+			"created": 1739664000000,
+			"name": "Get Current User",
+			"description": "Get the authenticated user's profile, roles, and permissions. Super admins receive all permissions automatically.",
+			"url": "{{ _.base_url }}/api/v1/auth/me",
+			"method": "GET",
+			"headers": [
+				{
+					"name": "Authorization",
+					"value": "Bearer {{ _.access_token }}"
+				}
+			],
+			"parameters": [],
+			"authentication": {},
+			"body": {},
+			"_type": "request"
+		}
+	]
+}
