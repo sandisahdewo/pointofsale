@@ -85,6 +85,68 @@ func CreateTestPermission(t *testing.T, db *gorm.DB, overrides ...func(*models.P
 	return permission
 }
 
+// CreateTestSupplier creates a supplier in the test database with sensible defaults.
+func CreateTestSupplier(t *testing.T, db *gorm.DB, overrides ...func(*models.Supplier)) *models.Supplier {
+	t.Helper()
+
+	supplier := &models.Supplier{
+		Name:    fmt.Sprintf("Test Supplier %s", uuid.New().String()[:8]),
+		Address: "Test Address",
+		Active:  true,
+	}
+
+	// Apply overrides
+	for _, override := range overrides {
+		override(supplier)
+	}
+
+	err := db.Create(supplier).Error
+	require.NoError(t, err, "failed to create test supplier")
+
+	return supplier
+}
+
+// CreateTestCategory creates a category in the test database with sensible defaults.
+func CreateTestCategory(t *testing.T, db *gorm.DB, overrides ...func(*models.Category)) *models.Category {
+	t.Helper()
+
+	category := &models.Category{
+		Name:        fmt.Sprintf("Test Category %s", uuid.New().String()[:8]),
+		Description: "Test category description",
+	}
+
+	for _, override := range overrides {
+		override(category)
+	}
+
+	err := db.Create(category).Error
+	require.NoError(t, err, "failed to create test category")
+
+	return category
+}
+
+// CreateTestRack creates a rack in the test database with sensible defaults.
+func CreateTestRack(t *testing.T, db *gorm.DB, overrides ...func(*models.Rack)) *models.Rack {
+	t.Helper()
+
+	rack := &models.Rack{
+		Name:     fmt.Sprintf("Test Rack %s", uuid.New().String()[:8]),
+		Code:     fmt.Sprintf("TR-%s", uuid.New().String()[:6]),
+		Location: "Test Location",
+		Capacity: 100,
+		Active:   true,
+	}
+
+	for _, override := range overrides {
+		override(rack)
+	}
+
+	err := db.Create(rack).Error
+	require.NoError(t, err, "failed to create test rack")
+
+	return rack
+}
+
 // CreateTestSuperAdmin creates a super admin user with the Super Admin role.
 func CreateTestSuperAdmin(t *testing.T, db *gorm.DB) *models.User {
 	t.Helper()

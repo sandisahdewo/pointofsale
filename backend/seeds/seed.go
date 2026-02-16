@@ -37,6 +37,21 @@ func Run(db *gorm.DB) error {
 		return err
 	}
 
+	// 6. Seed Categories
+	if err := seedCategories(db); err != nil {
+		return err
+	}
+
+	// 7. Seed Suppliers
+	if err := seedSuppliers(db); err != nil {
+		return err
+	}
+
+	// 8. Seed Racks
+	if err := seedRacks(db); err != nil {
+		return err
+	}
+
 	slog.Info("Database seeded successfully")
 	return nil
 }
@@ -307,6 +322,145 @@ func seedTestUsers(db *gorm.DB) error {
 				}
 
 				slog.Info("created test user", "email", tu.user.Email)
+			} else {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func seedCategories(db *gorm.DB) error {
+	categories := []models.Category{
+		{Name: "Clothing", Description: "Apparel and garments"},
+		{Name: "Food & Beverages", Description: "Food items and drinks"},
+		{Name: "Stationery", Description: "Office and school supplies"},
+		{Name: "Household", Description: "Home and kitchen essentials"},
+	}
+
+	for _, category := range categories {
+		var existing models.Category
+		if err := db.Where("name = ?", category.Name).First(&existing).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				if err := db.Create(&category).Error; err != nil {
+					return err
+				}
+				slog.Info("created category", "name", category.Name)
+			} else {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func seedSuppliers(db *gorm.DB) error {
+	suppliers := []struct {
+		supplier     models.Supplier
+		bankAccounts []models.SupplierBankAccount
+	}{
+		{
+			supplier: models.Supplier{
+				Name:    "PT Sumber Makmur",
+				Address: "Jl. Industri No. 45, Jakarta",
+				Phone:   "+62-21-5550001",
+				Email:   "order@sumbermakmur.co.id",
+				Website: "sumbermakmur.co.id",
+				Active:  true,
+			},
+			bankAccounts: []models.SupplierBankAccount{
+				{AccountName: "BCA - Main Account", AccountNumber: "1234567890"},
+				{AccountName: "Mandiri - Operations", AccountNumber: "0987654321"},
+			},
+		},
+		{
+			supplier: models.Supplier{
+				Name:    "CV Jaya Abadi",
+				Address: "Jl. Perdagangan No. 12, Surabaya",
+				Phone:   "+62-31-5550002",
+				Email:   "sales@jayaabadi.com",
+				Active:  true,
+			},
+			bankAccounts: []models.SupplierBankAccount{
+				{AccountName: "BCA - Main Account", AccountNumber: "1122334455"},
+			},
+		},
+		{
+			supplier: models.Supplier{
+				Name:    "UD Berkah Sentosa",
+				Address: "Jl. Pasar Baru No. 8, Bandung",
+				Active:  true,
+			},
+			bankAccounts: []models.SupplierBankAccount{},
+		},
+		{
+			supplier: models.Supplier{
+				Name:    "PT Global Supplies",
+				Address: "Jl. Raya Serpong No. 100, Tangerang",
+				Phone:   "+62-21-5550004",
+				Email:   "info@globalsupplies.co.id",
+				Website: "globalsupplies.co.id",
+				Active:  false,
+			},
+			bankAccounts: []models.SupplierBankAccount{
+				{AccountName: "BNI - Main Account", AccountNumber: "5566778899"},
+				{AccountName: "BRI - Operations", AccountNumber: "9988776655"},
+			},
+		},
+	}
+
+	for _, s := range suppliers {
+		var existing models.Supplier
+		if err := db.Where("name = ?", s.supplier.Name).First(&existing).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				// Create supplier in transaction
+				if err := db.Transaction(func(tx *gorm.DB) error {
+					// Create supplier
+					if err := tx.Select("*").Create(&s.supplier).Error; err != nil {
+						return err
+					}
+
+					// Create bank accounts
+					for _, ba := range s.bankAccounts {
+						ba.SupplierID = s.supplier.ID
+						if err := tx.Create(&ba).Error; err != nil {
+							return err
+						}
+					}
+
+					return nil
+				}); err != nil {
+					return err
+				}
+				slog.Info("created supplier", "name", s.supplier.Name, "bank_accounts", len(s.bankAccounts))
+			} else {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func seedRacks(db *gorm.DB) error {
+	racks := []models.Rack{
+		{Name: "Main Display", Code: "R-001", Location: "Store Front", Capacity: 100, Description: "Primary display shelf near entrance", Active: true},
+		{Name: "Electronics Shelf", Code: "R-002", Location: "Store Front", Capacity: 50, Description: "Dedicated electronics display", Active: true},
+		{Name: "Cold Storage", Code: "R-003", Location: "Warehouse Zone A", Capacity: 200, Description: "Refrigerated storage area", Active: true},
+		{Name: "Bulk Storage", Code: "R-004", Location: "Warehouse Zone B", Capacity: 500, Description: "Large item storage", Active: true},
+		{Name: "Clearance Rack", Code: "R-005", Location: "Store Back", Capacity: 30, Description: "Discounted items", Active: false},
+	}
+
+	for _, rack := range racks {
+		var existing models.Rack
+		if err := db.Where("code = ?", rack.Code).First(&existing).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				if err := db.Select("*").Create(&rack).Error; err != nil {
+					return err
+				}
+				slog.Info("created rack", "code", rack.Code, "name", rack.Name)
 			} else {
 				return err
 			}

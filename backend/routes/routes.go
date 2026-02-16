@@ -18,6 +18,9 @@ func Setup(
 	userHandler *handlers.UserHandler,
 	roleHandler *handlers.RoleHandler,
 	permissionHandler *handlers.PermissionHandler,
+	categoryHandler *handlers.CategoryHandler,
+	supplierHandler *handlers.SupplierHandler,
+	rackHandler *handlers.RackHandler,
 	authMiddleware *middleware.AuthMiddleware,
 	permMiddleware *middleware.PermissionMiddleware,
 	cfg *config.Config,
@@ -91,6 +94,33 @@ func Setup(
 
 			// Permissions
 			r.With(permMiddleware.RequirePermission("Settings", "Roles & Permissions", "read")).Get("/permissions", permissionHandler.ListPermissions)
+
+			// Master Data - Categories
+			r.Route("/categories", func(r chi.Router) {
+				r.With(permMiddleware.RequirePermission("Master Data", "Category", "read")).Get("/", categoryHandler.ListCategories)
+				r.With(permMiddleware.RequirePermission("Master Data", "Category", "read")).Get("/{id}", categoryHandler.GetCategory)
+				r.With(permMiddleware.RequirePermission("Master Data", "Category", "create")).Post("/", categoryHandler.CreateCategory)
+				r.With(permMiddleware.RequirePermission("Master Data", "Category", "update")).Put("/{id}", categoryHandler.UpdateCategory)
+				r.With(permMiddleware.RequirePermission("Master Data", "Category", "delete")).Delete("/{id}", categoryHandler.DeleteCategory)
+			})
+
+			// Master Data - Suppliers
+			r.Route("/suppliers", func(r chi.Router) {
+				r.With(permMiddleware.RequirePermission("Master Data", "Supplier", "read")).Get("/", supplierHandler.ListSuppliers)
+				r.With(permMiddleware.RequirePermission("Master Data", "Supplier", "read")).Get("/{id}", supplierHandler.GetSupplier)
+				r.With(permMiddleware.RequirePermission("Master Data", "Supplier", "create")).Post("/", supplierHandler.CreateSupplier)
+				r.With(permMiddleware.RequirePermission("Master Data", "Supplier", "update")).Put("/{id}", supplierHandler.UpdateSupplier)
+				r.With(permMiddleware.RequirePermission("Master Data", "Supplier", "delete")).Delete("/{id}", supplierHandler.DeleteSupplier)
+			})
+
+			// Master Data - Racks
+			r.Route("/racks", func(r chi.Router) {
+				r.With(permMiddleware.RequirePermission("Master Data", "Product", "read")).Get("/", rackHandler.ListRacks)
+				r.With(permMiddleware.RequirePermission("Master Data", "Product", "read")).Get("/{id}", rackHandler.GetRack)
+				r.With(permMiddleware.RequirePermission("Master Data", "Product", "create")).Post("/", rackHandler.CreateRack)
+				r.With(permMiddleware.RequirePermission("Master Data", "Product", "update")).Put("/{id}", rackHandler.UpdateRack)
+				r.With(permMiddleware.RequirePermission("Master Data", "Product", "delete")).Delete("/{id}", rackHandler.DeleteRack)
+			})
 		})
 	})
 }

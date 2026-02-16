@@ -98,12 +98,18 @@ func main() {
 	// Initialize repositories
 	userRepo := repositories.NewUserRepository(db)
 	roleRepo := repositories.NewRoleRepository(db)
+	categoryRepo := repositories.NewCategoryRepository(db)
+	supplierRepo := repositories.NewSupplierRepository(db)
+	rackRepo := repositories.NewRackRepository(db)
 
 	// Initialize services
 	authService := services.NewAuthService(userRepo, rdb, cfg, emailService)
 	userEmailSvc := &userEmailAdapter{svc: emailService}
 	userService := services.NewUserService(userRepo, rdb, cfg, userEmailSvc)
 	roleService := services.NewRoleService(roleRepo)
+	categoryService := services.NewCategoryService(categoryRepo)
+	supplierService := services.NewSupplierService(supplierRepo)
+	rackService := services.NewRackService(rackRepo)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTAccessSecret, rdb, userRepo)
@@ -115,10 +121,13 @@ func main() {
 	userHandler := handlers.NewUserHandler(userService)
 	roleHandler := handlers.NewRoleHandler(roleService)
 	permissionHandler := handlers.NewPermissionHandler(db, rdb)
+	categoryHandler := handlers.NewCategoryHandler(categoryService)
+	supplierHandler := handlers.NewSupplierHandler(supplierService)
+	rackHandler := handlers.NewRackHandler(rackService)
 
 	// Setup router and routes
 	r := chi.NewRouter()
-	routes.Setup(r, healthHandler, authHandler, userHandler, roleHandler, permissionHandler, authMiddleware, permMiddleware, cfg)
+	routes.Setup(r, healthHandler, authHandler, userHandler, roleHandler, permissionHandler, categoryHandler, supplierHandler, rackHandler, authMiddleware, permMiddleware, cfg)
 
 	// Start server
 	addr := fmt.Sprintf(":%s", cfg.AppPort)
