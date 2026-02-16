@@ -6,7 +6,7 @@ import AdminLayout from '@/components/layout/AdminLayout';
 import Button from '@/components/ui/Button';
 import StatusBadge from '@/components/ui/StatusBadge';
 import ConfirmModal from '@/components/ui/ConfirmModal';
-import { usePurchaseOrderStore, POStatus } from '@/stores/usePurchaseOrderStore';
+import { usePurchaseOrderStore, POStatus, PurchaseOrder } from '@/stores/usePurchaseOrderStore';
 import { useToastStore } from '@/stores/useToastStore';
 
 const STATUS_COLORS: Record<POStatus, 'green' | 'blue' | 'yellow' | 'amber' | 'gray' | 'red'> = {
@@ -107,7 +107,7 @@ export default function PurchaseOrderListPage() {
     }).format(date);
   };
 
-  const getActionButtons = (po: any) => {
+  const getActionButtons = (po: PurchaseOrder) => {
     const actions = [];
 
     actions.push(
