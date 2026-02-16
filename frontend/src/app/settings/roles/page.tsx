@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminLayout from '@/components/layout/AdminLayout';
 import Button from '@/components/ui/Button';
@@ -10,18 +10,23 @@ import type { SortDirection } from '@/components/ui/Table';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import RoleFormModal from '@/components/role/RoleFormModal';
 import { useRoleStore, Role } from '@/stores/useRoleStore';
-import { useUserStore } from '@/stores/useUserStore';
 import { useToastStore } from '@/stores/useToastStore';
+import { ApiError } from '@/lib/api';
 
 const DEFAULT_PAGE_SIZE = 10;
 
 export default function RolesPage() {
   const router = useRouter();
-  const { roles, deleteRole } = useRoleStore();
-  const { users, removeRoleFromUsers } = useUserStore();
+  const { fetchRoles, createRole, updateRole, deleteRole } = useRoleStore();
   const { addToast } = useToastStore();
 
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -33,45 +38,45 @@ export default function RolesPage() {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [deletingRole, setDeletingRole] = useState<Role | null>(null);
 
-  const getUserCount = (roleId: number): number => {
-    return users.filter((u) => u.roles.includes(roleId)).length;
-  };
+  // Debounce search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setCurrentPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
-  const filtered = useMemo(() => {
-    if (!search) return roles;
-    const q = search.toLowerCase();
-    return roles.filter(
-      (r) =>
-        r.name.toLowerCase().includes(q) ||
-        r.description.toLowerCase().includes(q)
-    );
-  }, [roles, search]);
-
-  const sorted = useMemo(() => {
-    if (!sortKey || !sortDirection) return filtered;
-    return [...filtered].sort((a, b) => {
-      const aVal = (a as unknown as Record<string, unknown>)[sortKey];
-      const bVal = (b as unknown as Record<string, unknown>)[sortKey];
-      if (typeof aVal === 'number' && typeof bVal === 'number') {
-        return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+  const loadRoles = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetchRoles({
+        page: currentPage,
+        pageSize,
+        search: debouncedSearch || undefined,
+        sortBy: sortKey || undefined,
+        sortDir: sortDirection || undefined,
+      });
+      setRoles(response.data);
+      setTotalItems(response.meta.totalItems);
+      setTotalPages(response.meta.totalPages);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to load roles', 'error');
       }
-      const aStr = String(aVal).toLowerCase();
-      const bStr = String(bVal).toLowerCase();
-      if (aStr < bStr) return sortDirection === 'asc' ? -1 : 1;
-      if (aStr > bStr) return sortDirection === 'asc' ? 1 : -1;
-      return 0;
-    });
-  }, [filtered, sortKey, sortDirection]);
+    } finally {
+      setLoading(false);
+    }
+  }, [currentPage, pageSize, debouncedSearch, sortKey, sortDirection, fetchRoles, addToast]);
 
-  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
-  const paginated = sorted.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
+  useEffect(() => {
+    loadRoles();
+  }, [loadRoles]);
 
   const handleSearch = (value: string) => {
     setSearch(value);
-    setCurrentPage(1);
   };
 
   const handleSort = (key: string, direction: SortDirection) => {
@@ -100,13 +105,39 @@ export default function RolesPage() {
     setIsDeleteOpen(true);
   };
 
-  const handleDelete = () => {
-    if (deletingRole) {
-      deleteRole(deletingRole.id);
-      removeRoleFromUsers(deletingRole.id);
+  const handleFormSave = async (input: { name: string; description: string }) => {
+    try {
+      if (editingRole) {
+        await updateRole(editingRole.id, input);
+        addToast(`Role ${input.name} updated successfully.`, 'success');
+      } else {
+        await createRole(input);
+        addToast(`Role ${input.name} created successfully.`, 'success');
+      }
+      setIsFormOpen(false);
+      loadRoles();
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('An error occurred', 'error');
+      }
+      throw error;
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deletingRole) return;
+    try {
+      await deleteRole(deletingRole.id);
       addToast(`Role ${deletingRole.name} has been deleted.`, 'success');
-      const newTotal = Math.max(1, Math.ceil((filtered.length - 1) / pageSize));
-      if (currentPage > newTotal) setCurrentPage(newTotal);
+      loadRoles();
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('An error occurred', 'error');
+      }
     }
     setIsDeleteOpen(false);
   };
@@ -119,10 +150,9 @@ export default function RolesPage() {
       key: 'users',
       label: 'Users',
       render: (item: Role) => {
-        const count = getUserCount(item.id);
         return (
           <span className="text-gray-700">
-            {count} {count === 1 ? 'user' : 'users'}
+            {item.userCount} {item.userCount === 1 ? 'user' : 'users'}
           </span>
         );
       },
@@ -178,6 +208,16 @@ export default function RolesPage() {
     },
   ];
 
+  if (loading) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        </div>
+      </AdminLayout>
+    );
+  }
+
   return (
     <AdminLayout>
       <div className="space-y-6">
@@ -199,7 +239,7 @@ export default function RolesPage() {
           </div>
           <Table
             columns={columns}
-            data={paginated}
+            data={roles}
             currentPage={currentPage}
             totalPages={totalPages}
             onPageChange={setCurrentPage}
@@ -208,7 +248,7 @@ export default function RolesPage() {
             onSort={handleSort}
             pageSize={pageSize}
             onPageSizeChange={handlePageSizeChange}
-            totalItems={sorted.length}
+            totalItems={totalItems}
           />
         </div>
       </div>
@@ -217,6 +257,7 @@ export default function RolesPage() {
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
         editingRole={editingRole}
+        onSave={handleFormSave}
       />
 
       <ConfirmModal

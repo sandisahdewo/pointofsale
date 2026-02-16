@@ -1,11 +1,13 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import Header from './Header';
 import Sidebar from './Sidebar';
 import Footer from './Footer';
 import ToastContainer from '@/components/ui/Toast';
 import { useSidebarStore } from '@/stores/useSidebarStore';
+import { useAuthStore } from '@/stores/useAuthStore';
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -13,6 +15,33 @@ interface AdminLayoutProps {
 
 export default function AdminLayout({ children }: AdminLayoutProps) {
   const { isOpen } = useSidebarStore();
+  const { isAuthenticated, isInitialized, initialize } = useAuthStore();
+  const router = useRouter();
+
+  useEffect(() => {
+    initialize();
+  }, [initialize]);
+
+  useEffect(() => {
+    if (isInitialized && !isAuthenticated) {
+      router.replace('/login');
+    }
+  }, [isInitialized, isAuthenticated, router]);
+
+  if (!isInitialized) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return null;
+  }
 
   return (
     <div className="min-h-screen flex flex-col">

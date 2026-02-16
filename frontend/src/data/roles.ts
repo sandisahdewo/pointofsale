@@ -1,4 +1,11 @@
-import { Role } from '@/stores/useRoleStore';
+// Legacy data - no longer used with API integration
+interface Role {
+  id: number;
+  name: string;
+  description: string;
+  isSystem: boolean;
+  createdAt: string;
+}
 
 export const initialRoles: Role[] = [
   {

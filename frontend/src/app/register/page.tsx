@@ -1,14 +1,22 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Card from '@/components/ui/Card';
 import Alert from '@/components/ui/Alert';
 import ToastContainer from '@/components/ui/Toast';
+import { useAuthStore } from '@/stores/useAuthStore';
+import { useToastStore } from '@/stores/useToastStore';
+import { ApiError } from '@/lib/api';
 
 export default function RegisterPage() {
+  const router = useRouter();
+  const { register, isLoading, isAuthenticated } = useAuthStore();
+  const { addToast } = useToastStore();
+
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -16,23 +24,54 @@ export default function RegisterPage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [alertMessage, setAlertMessage] = useState('');
 
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.push('/dashboard');
+    }
+  }, [isAuthenticated, router]);
+
   const validate = () => {
     const newErrors: Record<string, string> = {};
     if (!name) newErrors.name = 'Name is required';
     if (!email) newErrors.email = 'Email is required';
     else if (!/\S+@\S+\.\S+/.test(email)) newErrors.email = 'Invalid email format';
     if (!password) newErrors.password = 'Password is required';
-    else if (password.length < 6) newErrors.password = 'Password must be at least 6 characters';
+    else if (password.length < 8) newErrors.password = 'Password must be at least 8 characters';
+    else if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])/.test(password)) {
+      newErrors.password = 'Password must contain uppercase, lowercase, digit, and special character';
+    }
     if (!confirmPassword) newErrors.confirmPassword = 'Please confirm your password';
     else if (password !== confirmPassword) newErrors.confirmPassword = 'Passwords do not match';
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
-    setAlertMessage('Email is already registered. Please use a different email or login.');
+
+    setAlertMessage('');
+
+    try {
+      const message = await register(name, email, password, confirmPassword);
+      addToast(message, 'success');
+
+      setTimeout(() => {
+        router.push('/login');
+      }, 2000);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        if (error.status === 409 && error.code === 'EMAIL_EXISTS') {
+          setAlertMessage('Email is already registered. Please use a different email or login.');
+        } else if (error.status === 400 && error.code === 'VALIDATION_ERROR') {
+          setAlertMessage(error.message);
+        } else {
+          setAlertMessage(error.message || 'Registration failed. Please try again.');
+        }
+      } else {
+        setAlertMessage('An unexpected error occurred. Please try again.');
+      }
+    }
   };
 
   return (
@@ -89,8 +128,8 @@ export default function RegisterPage() {
               onChange={(e) => setConfirmPassword(e.target.value)}
               error={errors.confirmPassword}
             />
-            <Button type="submit" className="w-full">
-              Register
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading ? 'Registering...' : 'Register'}
             </Button>
           </form>
           <div className="mt-4 text-center text-sm">

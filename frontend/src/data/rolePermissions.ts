@@ -1,4 +1,9 @@
-import { RolePermission } from '@/stores/useRoleStore';
+// Legacy data - no longer used with API integration
+interface RolePermission {
+  roleId: number;
+  permissionId: number;
+  actions: string[];
+}
 
 export const initialRolePermissions: RolePermission[] = [
   // Manager (roleId: 2)

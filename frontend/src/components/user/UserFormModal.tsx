@@ -8,14 +8,14 @@ import Select from '@/components/ui/Select';
 import ImageUpload from '@/components/ui/ImageUpload';
 import MultiSelect from '@/components/ui/MultiSelect';
 import Button from '@/components/ui/Button';
-import { User, useUserStore } from '@/stores/useUserStore';
+import { User, CreateUserInput, UpdateUserInput } from '@/stores/useUserStore';
 import { useRoleStore } from '@/stores/useRoleStore';
 
 interface UserFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   user: User | null;
-  onSave: (data: Omit<User, 'id' | 'createdAt'>) => void;
+  onSave: (data: CreateUserInput | UpdateUserInput, isEdit: boolean) => Promise<void>;
 }
 
 export default function UserFormModal({
@@ -24,7 +24,6 @@ export default function UserFormModal({
   user,
   onSave,
 }: UserFormModalProps) {
-  const { users } = useUserStore();
   const { roles } = useRoleStore();
 
   const [name, setName] = useState('');
@@ -35,6 +34,7 @@ export default function UserFormModal({
   const [selectedRoles, setSelectedRoles] = useState<string[]>([]);
   const [status, setStatus] = useState<'active' | 'inactive'>('active');
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
 
   const isEdit = !!user;
 
@@ -46,7 +46,7 @@ export default function UserFormModal({
         setPhone(user.phone);
         setAddress(user.address);
         setProfilePicture(user.profilePicture ? [user.profilePicture] : []);
-        setSelectedRoles(user.roles.map(String));
+        setSelectedRoles((user.roles || []).map((r) => String(r.id)));
         setStatus(user.status === 'pending' ? 'active' : (user.status as 'active' | 'inactive'));
       } else {
         setName('');
@@ -58,6 +58,7 @@ export default function UserFormModal({
         setStatus('active');
       }
       setErrors({});
+      setSubmitting(false);
     }
   }, [isOpen, user]);
 
@@ -88,15 +89,6 @@ export default function UserFormModal({
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(email.trim())) {
         errs.email = 'Please enter a valid email address';
-      } else {
-        const duplicate = users.find(
-          (u) =>
-            u.email.toLowerCase() === email.trim().toLowerCase() &&
-            u.id !== (user?.id ?? -1)
-        );
-        if (duplicate) {
-          errs.email = 'Email is already registered.';
-        }
       }
     }
 
@@ -104,21 +96,25 @@ export default function UserFormModal({
     return Object.keys(errs).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
 
-    onSave({
-      name: name.trim(),
-      email: email.trim(),
-      phone: phone.trim(),
-      address: address.trim(),
-      password: user?.password ?? 'password123',
-      profilePicture: profilePicture[0] || '',
-      roles: selectedRoles.map(Number),
-      status: isEdit ? status : 'active',
-      isSuperAdmin: user?.isSuperAdmin ?? false,
-    });
+    setSubmitting(true);
+    try {
+      await onSave({
+        name: name.trim(),
+        email: email.trim(),
+        phone: phone.trim() || undefined,
+        address: address.trim() || undefined,
+        roleIds: selectedRoles.map(Number),
+        ...(isEdit ? { status } : {}),
+      }, isEdit);
+    } catch (error) {
+      // Error handling is done in the parent
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -135,6 +131,7 @@ export default function UserFormModal({
           onChange={(e) => setName(e.target.value)}
           error={errors.name}
           required
+          disabled={submitting}
         />
         <Input
           label="Email"
@@ -144,12 +141,14 @@ export default function UserFormModal({
           onChange={(e) => setEmail(e.target.value)}
           error={errors.email}
           required
+          disabled={submitting}
         />
         <Input
           label="Phone"
           placeholder="Phone number"
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
+          disabled={submitting}
         />
         <Textarea
           label="Address"
@@ -157,6 +156,7 @@ export default function UserFormModal({
           value={address}
           onChange={(e) => setAddress(e.target.value)}
           rows={3}
+          disabled={submitting}
         />
         <ImageUpload
           label="Profile Picture"
@@ -178,14 +178,16 @@ export default function UserFormModal({
             onChange={(e) =>
               setStatus(e.target.value as 'active' | 'inactive')
             }
-            disabled={user?.isSuperAdmin}
+            disabled={user?.isSuperAdmin || submitting}
           />
         )}
         <div className="flex justify-end gap-2 pt-2">
-          <Button type="button" variant="outline" onClick={onClose}>
+          <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button type="submit">Save</Button>
+          <Button type="submit" disabled={submitting}>
+            {submitting ? 'Saving...' : 'Save'}
+          </Button>
         </div>
       </form>
     </Modal>

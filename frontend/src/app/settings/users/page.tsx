@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import AdminLayout from '@/components/layout/AdminLayout';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -10,9 +10,9 @@ import ConfirmModal from '@/components/ui/ConfirmModal';
 import Avatar from '@/components/ui/Avatar';
 import Badge from '@/components/ui/Badge';
 import UserFormModal from '@/components/user/UserFormModal';
-import { useUserStore, User } from '@/stores/useUserStore';
-import { useRoleStore } from '@/stores/useRoleStore';
+import { useUserStore, User, UserRole, CreateUserInput, UpdateUserInput } from '@/stores/useUserStore';
 import { useToastStore } from '@/stores/useToastStore';
+import { ApiError } from '@/lib/api';
 
 const DEFAULT_PAGE_SIZE = 10;
 
@@ -29,11 +29,16 @@ const statusLabel: Record<User['status'], string> = {
 };
 
 export default function SettingsUsersPage() {
-  const { users, addUser, updateUser, deleteUser, approveUser } = useUserStore();
-  const { roles } = useRoleStore();
+  const { fetchUsers, createUser, updateUser, deleteUser, approveUser, rejectUser } = useUserStore();
   const { addToast } = useToastStore();
 
+  const [users, setUsers] = useState<User[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
   const [search, setSearch] = useState('');
+  const [searchDebounced, setSearchDebounced] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -47,76 +52,50 @@ export default function SettingsUsersPage() {
   const [isRejectOpen, setIsRejectOpen] = useState(false);
   const [rejectingUser, setRejectingUser] = useState<User | null>(null);
 
-  // Build role lookup map
-  const roleMap = useMemo(() => {
-    const map = new Map<number, string>();
-    roles.forEach((r) => map.set(r.id, r.name));
-    return map;
-  }, [roles]);
-
-  const getRoleNames = (roleIds: number[]) => {
-    const names = roleIds
-      .map((id) => roleMap.get(id))
-      .filter(Boolean)
-      .join(', ');
-    return names || '\u2014';
+  const getRoleNames = (roles: UserRole[] | undefined | null) => {
+    if (!roles || roles.length === 0) return '—';
+    return roles.map(r => r.name).join(', ');
   };
 
-  const filtered = useMemo(() => {
-    if (!search) return users;
-    const q = search.toLowerCase();
-    return users.filter(
-      (u) =>
-        u.name.toLowerCase().includes(q) ||
-        u.email.toLowerCase().includes(q)
-    );
-  }, [users, search]);
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearchDebounced(search);
+      setCurrentPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
 
-  const sorted = useMemo(() => {
-    if (!sortKey || !sortDirection) return filtered;
-    return [...filtered].sort((a, b) => {
-      let aVal: string | number;
-      let bVal: string | number;
-
-      switch (sortKey) {
-        case 'id':
-          aVal = a.id;
-          bVal = b.id;
-          break;
-        case 'name':
-          aVal = a.name.toLowerCase();
-          bVal = b.name.toLowerCase();
-          break;
-        case 'email':
-          aVal = a.email.toLowerCase();
-          bVal = b.email.toLowerCase();
-          break;
-        case 'status':
-          aVal = a.status;
-          bVal = b.status;
-          break;
-        default:
-          return 0;
+  const loadUsers = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetchUsers({
+        page: currentPage,
+        pageSize,
+        search: searchDebounced || undefined,
+        sortBy: sortKey || undefined,
+        sortDir: sortDirection || undefined,
+      });
+      setUsers(response.data);
+      setTotalItems(response.meta.totalItems);
+      setTotalPages(response.meta.totalPages);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to load users', 'error');
       }
+    } finally {
+      setLoading(false);
+    }
+  }, [currentPage, pageSize, searchDebounced, sortKey, sortDirection, fetchUsers, addToast]);
 
-      if (typeof aVal === 'number' && typeof bVal === 'number') {
-        return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
-      }
-      if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
-      if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
-      return 0;
-    });
-  }, [filtered, sortKey, sortDirection]);
-
-  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
-  const paginated = sorted.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
+  useEffect(() => {
+    loadUsers();
+  }, [loadUsers]);
 
   const handleSearch = (value: string) => {
     setSearch(value);
-    setCurrentPage(1);
   };
 
   const handleSort = (key: string, direction: SortDirection) => {
@@ -150,43 +129,73 @@ export default function SettingsUsersPage() {
     setIsRejectOpen(true);
   };
 
-  const handleSave = (data: Omit<User, 'id' | 'createdAt'>) => {
-    if (editingUser) {
-      updateUser(editingUser.id, data);
-      addToast('User updated successfully.', 'success');
-    } else {
-      addUser(data);
-      addToast(
-        `User created successfully. Credentials have been sent to ${data.email}.`,
-        'success'
-      );
+  const handleSave = async (data: CreateUserInput | UpdateUserInput, isEdit: boolean) => {
+    try {
+      if (isEdit && editingUser) {
+        await updateUser(editingUser.id, data as UpdateUserInput);
+        addToast('User updated successfully.', 'success');
+      } else {
+        await createUser(data as CreateUserInput);
+        addToast('User created successfully. Credentials sent to email.', 'success');
+      }
+      setIsFormOpen(false);
+      await loadUsers();
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('An error occurred', 'error');
+      }
+      throw error;
     }
-    setIsFormOpen(false);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (deletingUser) {
-      deleteUser(deletingUser.id);
-      addToast(`User ${deletingUser.name} has been deleted.`, 'success');
-      const newTotal = Math.max(1, Math.ceil((filtered.length - 1) / pageSize));
-      if (currentPage > newTotal) setCurrentPage(newTotal);
+      try {
+        await deleteUser(deletingUser.id);
+        addToast(`User ${deletingUser.name} has been deleted.`, 'success');
+        setIsDeleteOpen(false);
+        await loadUsers();
+      } catch (error) {
+        if (error instanceof ApiError) {
+          addToast(error.message, 'error');
+        } else {
+          addToast('Failed to delete user', 'error');
+        }
+      }
     }
-    setIsDeleteOpen(false);
   };
 
-  const handleApprove = (user: User) => {
-    approveUser(user.id);
-    addToast(`User ${user.name} has been approved.`, 'success');
+  const handleApprove = async (user: User) => {
+    try {
+      await approveUser(user.id);
+      addToast(`User ${user.name} has been approved.`, 'success');
+      await loadUsers();
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to approve user', 'error');
+      }
+    }
   };
 
-  const handleReject = () => {
+  const handleReject = async () => {
     if (rejectingUser) {
-      deleteUser(rejectingUser.id);
-      addToast(`User ${rejectingUser.name} has been rejected.`, 'success');
-      const newTotal = Math.max(1, Math.ceil((filtered.length - 1) / pageSize));
-      if (currentPage > newTotal) setCurrentPage(newTotal);
+      try {
+        await rejectUser(rejectingUser.id);
+        addToast(`User ${rejectingUser.name} has been rejected.`, 'success');
+        setIsRejectOpen(false);
+        await loadUsers();
+      } catch (error) {
+        if (error instanceof ApiError) {
+          addToast(error.message, 'error');
+        } else {
+          addToast('Failed to reject user', 'error');
+        }
+      }
     }
-    setIsRejectOpen(false);
   };
 
   const columns = [
@@ -300,7 +309,7 @@ export default function SettingsUsersPage() {
           </div>
           <Table
             columns={columns}
-            data={paginated}
+            data={users}
             currentPage={currentPage}
             totalPages={totalPages}
             onPageChange={setCurrentPage}
@@ -309,7 +318,7 @@ export default function SettingsUsersPage() {
             onSort={handleSort}
             pageSize={pageSize}
             onPageSizeChange={handlePageSizeChange}
-            totalItems={sorted.length}
+            totalItems={totalItems}
           />
         </div>
       </div>

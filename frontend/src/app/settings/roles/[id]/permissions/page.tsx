@@ -7,10 +7,9 @@ import Button from '@/components/ui/Button';
 import Checkbox from '@/components/ui/Checkbox';
 import ConfirmModal from '@/components/ui/ConfirmModal';
 import Link from 'next/link';
-import { useRoleStore, Permission, RolePermission } from '@/stores/useRoleStore';
+import { useRoleStore, Permission, Role } from '@/stores/useRoleStore';
 import { useToastStore } from '@/stores/useToastStore';
-
-const ALL_ACTIONS = ['read', 'create', 'update', 'delete', 'export'] as const;
+import { ApiError } from '@/lib/api';
 
 interface ModuleGroup {
   module: string;
@@ -31,14 +30,6 @@ function buildModuleGroups(permissions: Permission[]): ModuleGroup[] {
 }
 
 type PermissionMap = Map<number, Set<string>>;
-
-function buildPermissionMap(rolePerms: RolePermission[]): PermissionMap {
-  const map: PermissionMap = new Map();
-  for (const rp of rolePerms) {
-    map.set(rp.permissionId, new Set(rp.actions));
-  }
-  return map;
-}
 
 function clonePermissionMap(map: PermissionMap): PermissionMap {
   const clone: PermissionMap = new Map();
@@ -97,29 +88,62 @@ export default function PermissionsPage() {
   const params = useParams();
   const router = useRouter();
   const roleId = Number(params.id);
-  const { roles, permissions, getRolePermissions, setRolePermissions } = useRoleStore();
+  const { getRole, fetchPermissions, fetchRolePermissions, updateRolePermissions } = useRoleStore();
   const { addToast } = useToastStore();
 
-  const role = roles.find((r) => r.id === roleId);
-  const isSuperAdmin = role?.isSystem ?? false;
+  const [role, setRole] = useState<Role | null>(null);
+  const [permissions, setPermissions] = useState<Permission[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [permMap, setPermMap] = useState<PermissionMap>(new Map());
+  const savedSnapshot = useRef<PermissionMap>(new Map());
+
+  const isSuperAdmin = role?.isSystem && role?.name === 'Super Admin';
 
   const moduleGroups = useMemo(() => buildModuleGroups(permissions), [permissions]);
 
-  const initialPermMap = useMemo(() => {
-    if (isSuperAdmin) {
-      const map: PermissionMap = new Map();
-      for (const perm of permissions) {
-        map.set(perm.id, new Set(perm.actions));
+  const allActions = useMemo(() => {
+    const actionSet = new Set<string>();
+    for (const perm of permissions) {
+      for (const action of perm.actions) {
+        actionSet.add(action);
       }
-      return map;
     }
-    return buildPermissionMap(getRolePermissions(roleId));
-  }, [roleId, isSuperAdmin, permissions, getRolePermissions]);
+    return Array.from(actionSet);
+  }, [permissions]);
 
-  const [permMap, setPermMap] = useState<PermissionMap>(() =>
-    clonePermissionMap(initialPermMap)
-  );
-  const savedSnapshot = useRef<PermissionMap>(clonePermissionMap(initialPermMap));
+  useEffect(() => {
+    const loadData = async () => {
+      setLoading(true);
+      try {
+        const [roleData, permsData, rolePermsData] = await Promise.all([
+          getRole(roleId),
+          fetchPermissions(),
+          fetchRolePermissions(roleId),
+        ]);
+        setRole(roleData);
+        setPermissions(permsData);
+
+        const map: PermissionMap = new Map();
+        for (const rp of rolePermsData.permissions) {
+          if (rp.grantedActions.length > 0) {
+            map.set(rp.permissionId, new Set(rp.grantedActions));
+          }
+        }
+        setPermMap(map);
+        savedSnapshot.current = clonePermissionMap(map);
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 404) {
+          setRole(null);
+        } else {
+          addToast('Failed to load permissions', 'error');
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadData();
+  }, [roleId, getRole, fetchPermissions, fetchRolePermissions, addToast]);
 
   const [collapsedModules, setCollapsedModules] = useState<Set<string>>(
     new Set()
@@ -233,15 +257,32 @@ export default function PermissionsPage() {
     []
   );
 
-  const handleSave = () => {
-    // Persist each permission entry to the store
-    for (const perm of permissions) {
-      const actions = permMap.get(perm.id);
-      setRolePermissions(roleId, perm.id, actions ? Array.from(actions) : []);
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const permissionsInput = [];
+      for (const perm of permissions) {
+        const actions = permMap.get(perm.id);
+        if (actions && actions.size > 0) {
+          permissionsInput.push({
+            permissionId: perm.id,
+            actions: Array.from(actions),
+          });
+        }
+      }
+      await updateRolePermissions(roleId, permissionsInput);
+      savedSnapshot.current = clonePermissionMap(permMap);
+      addToast(`Permissions updated for ${role?.name}.`, 'success');
+      router.push('/settings/roles');
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('An error occurred', 'error');
+      }
+    } finally {
+      setSaving(false);
     }
-    savedSnapshot.current = clonePermissionMap(permMap);
-    addToast(`Permissions updated for ${role?.name}.`, 'success');
-    router.push('/settings/roles');
   };
 
   const handleCancel = () => {
@@ -263,6 +304,16 @@ export default function PermissionsPage() {
     }
     router.push('/settings/roles');
   };
+
+  if (loading) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        </div>
+      </AdminLayout>
+    );
+  }
 
   if (!role) {
     return (
@@ -318,10 +369,12 @@ export default function PermissionsPage() {
             </Link>
             {!isSuperAdmin && (
               <div className="flex gap-2">
-                <Button variant="outline" onClick={handleCancel}>
+                <Button variant="outline" onClick={handleCancel} disabled={saving}>
                   Cancel
                 </Button>
-                <Button onClick={handleSave}>Save</Button>
+                <Button onClick={handleSave} disabled={saving}>
+                  {saving ? 'Saving...' : 'Save'}
+                </Button>
               </div>
             )}
           </div>
@@ -349,7 +402,7 @@ export default function PermissionsPage() {
               <thead className="bg-gray-50 text-gray-600 uppercase text-xs">
                 <tr>
                   <th className="px-4 py-3 font-medium">Module / Feature</th>
-                  {ALL_ACTIONS.map((action) => (
+                  {allActions.map((action) => (
                     <th
                       key={action}
                       className="px-4 py-3 font-medium text-center w-24"
@@ -402,7 +455,7 @@ export default function PermissionsPage() {
                             </button>
                           </div>
                         </td>
-                        {ALL_ACTIONS.map((action) => (
+                        {allActions.map((action) => (
                           <td key={action} className="px-4 py-3" />
                         ))}
                       </tr>
@@ -428,7 +481,7 @@ export default function PermissionsPage() {
                                   disabled={isSuperAdmin}
                                 />
                               </td>
-                              {ALL_ACTIONS.map((action) => {
+                              {allActions.map((action) => {
                                 const isAvailable =
                                   perm.actions.includes(action);
                                 if (!isAvailable) {

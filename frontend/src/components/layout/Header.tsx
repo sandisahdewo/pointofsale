@@ -1,13 +1,27 @@
 'use client';
 
 import React from 'react';
+import { useRouter } from 'next/navigation';
 import { useSidebarStore } from '@/stores/useSidebarStore';
+import { useAuthStore } from '@/stores/useAuthStore';
 import Dropdown from '@/components/ui/Dropdown';
 import { useToastStore } from '@/stores/useToastStore';
 
 export default function Header() {
   const { toggle } = useSidebarStore();
   const { addToast } = useToastStore();
+  const { user, logout } = useAuthStore();
+  const router = useRouter();
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+      addToast('Logged out successfully', 'success');
+      router.push('/login');
+    } catch (error) {
+      addToast('Logout failed', 'error');
+    }
+  };
 
   const userMenuItems = [
     {
@@ -20,9 +34,7 @@ export default function Header() {
     },
     {
       label: 'Logout',
-      onClick: () => {
-        addToast('Logged out successfully', 'success');
-      },
+      onClick: handleLogout,
     },
   ];
 
@@ -49,9 +61,11 @@ export default function Header() {
         trigger={
           <div className="flex items-center gap-2 px-3 py-2 rounded-md hover:bg-gray-100">
             <div className="w-8 h-8 bg-gray-300 rounded-full flex items-center justify-center">
-              <span className="text-gray-600 text-sm font-medium">A</span>
+              <span className="text-gray-600 text-sm font-medium">
+                {user?.name?.charAt(0).toUpperCase() || 'U'}
+              </span>
             </div>
-            <span className="text-sm text-gray-700">Admin User</span>
+            <span className="text-sm text-gray-700">{user?.name || 'User'}</span>
             <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>

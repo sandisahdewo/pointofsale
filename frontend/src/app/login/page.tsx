@@ -1,21 +1,32 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Card from '@/components/ui/Card';
+import Alert from '@/components/ui/Alert';
 import ToastContainer from '@/components/ui/Toast';
 import { useToastStore } from '@/stores/useToastStore';
+import { useAuthStore } from '@/stores/useAuthStore';
+import { ApiError } from '@/lib/api';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [remember, setRemember] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string }>({});
+  const [apiError, setApiError] = useState<string>('');
   const router = useRouter();
   const { addToast } = useToastStore();
+  const { login, isLoading, isAuthenticated } = useAuthStore();
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      router.push('/dashboard');
+    }
+  }, [isAuthenticated, router]);
 
   const validate = () => {
     const newErrors: { email?: string; password?: string } = {};
@@ -26,11 +37,28 @@ export default function LoginPage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) return;
-    addToast('Login successful! Redirecting...', 'success');
-    setTimeout(() => router.push('/dashboard'), 1000);
+
+    setApiError('');
+
+    try {
+      await login(email, password);
+      addToast('Login successful! Redirecting...', 'success');
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 401) {
+          setApiError('Invalid email or password');
+        } else if (err.status === 403) {
+          setApiError(err.message);
+        } else {
+          setApiError(err.message);
+        }
+      } else {
+        setApiError('An unexpected error occurred. Please try again.');
+      }
+    }
   };
 
   return (
@@ -46,6 +74,13 @@ export default function LoginPage() {
 
         <Card>
           <form onSubmit={handleLogin} className="space-y-4">
+            {apiError && (
+              <Alert
+                type="error"
+                message={apiError}
+                onClose={() => setApiError('')}
+              />
+            )}
             <Input
               label="Email"
               type="email"
@@ -74,8 +109,8 @@ export default function LoginPage() {
                 Remember me
               </label>
             </div>
-            <Button type="submit" className="w-full">
-              Login
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading ? 'Logging in...' : 'Login'}
             </Button>
           </form>
           <div className="mt-4 text-center text-sm space-y-2">

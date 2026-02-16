@@ -1,4 +1,17 @@
-import { User } from '@/stores/useUserStore';
+// Legacy data - no longer used with API integration
+interface User {
+  id: number;
+  name: string;
+  email: string;
+  phone: string;
+  address: string;
+  password: string;
+  profilePicture: string;
+  roles: number[];
+  status: string;
+  isSuperAdmin: boolean;
+  createdAt: string;
+}
 
 export const initialUsers: User[] = [
   {
