@@ -150,8 +150,196 @@ cd frontend && npm run lint   # eslint
 ```
 
 ## Important Notes
-- No backend yet — all data is mock/in-memory via Zustand stores
-- No authentication logic — login/register pages are UI-only
 - No shadcn-ui — all UI components are custom-built
 - Tailwind uses default color palette (custom palette planned for future)
 - All imports use `@/` path alias (maps to `frontend/src/`)
+
+---
+
+# Point of Sale - Backend API
+
+## Tech Stack
+- **Language**: Go 1.24
+- **Router**: Chi v5
+- **Database**: PostgreSQL 17 (via GORM for queries, goose for migrations)
+- **Cache**: Redis 7 (JWT refresh tokens, token blacklisting, permission caching)
+- **Mail**: Mailpit (dev SMTP on :1025, Web UI on :8025)
+- **Auth**: Argon2id password hashing, JWT (access 15min + refresh 7d)
+- **Infra**: Docker Compose (backend, frontend, postgres, redis, mailpit)
+
+## Backend Project Structure
+
+```
+backend/
+├── cmd/server/main.go           # Entry point
+├── config/config.go             # Env config loader
+├── handlers/                    # HTTP handlers (one file per domain)
+│   └── *_test.go                # Handler/integration tests
+├── middleware/                   # Auth, CORS, permissions, logging
+│   └── *_test.go
+├── models/                      # GORM model structs
+├── repositories/                # Database queries (GORM-based)
+│   └── *_test.go                # Repository tests
+├── services/                    # Business logic layer
+│   └── *_test.go                # Service unit tests
+├── migrations/                  # Versioned .sql files (goose up/down)
+├── seeds/                       # Database seed data
+├── routes/routes.go             # Route definitions
+├── utils/                       # Helpers (password, JWT, validation)
+│   └── *_test.go                # Utility unit tests
+├── testutil/                    # Shared test helpers and fixtures
+│   ├── db.go                    # Test database setup/teardown
+│   ├── fixtures.go              # Factory functions for test data
+│   ├── auth.go                  # JWT helper for authenticated requests
+│   └── assert.go                # Custom assertion helpers
+├── Dockerfile
+├── .env.example
+├── .air.toml
+└── go.mod
+```
+
+## TDD Methodology
+
+**Every feature MUST follow strict Test-Driven Development:**
+
+### Red-Green-Refactor Cycle
+1. **RED**: Write a failing test that defines the expected behavior
+2. **GREEN**: Write the minimum code to make the test pass
+3. **REFACTOR**: Clean up the code while keeping tests green
+
+### Test Layers (write in this order per feature)
+
+| Layer | Directory | Tests What | Depends On |
+|-------|-----------|------------|------------|
+| **1. Utils** | `utils/*_test.go` | Pure functions (hashing, JWT, validation) | Nothing |
+| **2. Repository** | `repositories/*_test.go` | Database queries against real test DB | Test database |
+| **3. Service** | `services/*_test.go` | Business logic with mocked repositories | Interfaces/mocks |
+| **4. Handler** | `handlers/*_test.go` | HTTP request/response integration tests | Running test server + test DB |
+
+### Test Naming Convention
+```go
+func TestFunctionName_Scenario_ExpectedResult(t *testing.T) {
+    // Examples:
+    // TestHashPassword_ValidPassword_ReturnsHash
+    // TestLogin_InvalidEmail_Returns401
+    // TestCreateCategory_DuplicateName_Returns409
+    // TestReceivePO_SentStatus_UpdatesStock
+}
+```
+
+### Test Database Setup
+- Use a **separate PostgreSQL database** for tests (e.g., `pointofsale_test`)
+- Run goose migrations before tests
+- Each test function gets a **clean database** (truncate tables in `TestMain` or per-test setup)
+- Use transactions that rollback for isolation where possible
+- NEVER run tests against the development database
+
+```go
+// testutil/db.go pattern
+func SetupTestDB(t *testing.T) *gorm.DB {
+    // Connect to pointofsale_test database
+    // Run migrations
+    // Return DB handle
+}
+
+func CleanupTestDB(t *testing.T, db *gorm.DB) {
+    // Truncate all tables in reverse dependency order
+}
+```
+
+### Test Fixtures / Factory Functions
+```go
+// testutil/fixtures.go pattern
+func CreateTestUser(t *testing.T, db *gorm.DB, overrides ...func(*models.User)) *models.User
+func CreateTestRole(t *testing.T, db *gorm.DB, overrides ...func(*models.Role)) *models.Role
+func CreateTestCategory(t *testing.T, db *gorm.DB, overrides ...func(*models.Category)) *models.Category
+func CreateTestProduct(t *testing.T, db *gorm.DB, overrides ...func(*models.Product)) *models.Product
+// ... etc for each entity
+```
+
+### Handler Test Pattern (HTTP Integration Tests)
+```go
+func TestListCategories_Success(t *testing.T) {
+    // Setup: test DB, seed data, create authenticated request
+    db := testutil.SetupTestDB(t)
+    defer testutil.CleanupTestDB(t, db)
+
+    // Create test data
+    testutil.CreateTestCategory(t, db, func(c *models.Category) {
+        c.Name = "Electronics"
+    })
+
+    // Create authenticated request
+    req := testutil.AuthenticatedRequest(t, "GET", "/api/v1/categories", nil, testutil.SuperAdminToken)
+
+    // Execute
+    rr := httptest.NewRecorder()
+    router.ServeHTTP(rr, req)
+
+    // Assert
+    assert.Equal(t, http.StatusOK, rr.Code)
+    var response map[string]interface{}
+    json.Unmarshal(rr.Body.Bytes(), &response)
+    // ... assert response shape and data
+}
+```
+
+### What to Test Per Endpoint
+
+For **every** API endpoint, write tests for:
+1. **Happy path** — valid request returns expected response
+2. **Validation errors** — missing/invalid fields return 400
+3. **Auth required** — unauthenticated request returns 401
+4. **Permission denied** — user without permission returns 403
+5. **Not found** — invalid ID returns 404
+6. **Business rules** — domain-specific constraints (e.g., can't delete super admin, can't edit non-draft PO)
+7. **Edge cases** — empty lists, duplicate names, concurrent operations
+
+### Running Tests
+```bash
+cd backend && go test ./...                  # all tests
+cd backend && go test ./handlers/...         # handler tests only
+cd backend && go test ./services/...         # service tests only
+cd backend && go test -run TestLogin ./...   # specific test
+cd backend && go test -v -count=1 ./...      # verbose, no cache
+cd backend && go test -race ./...            # race condition detection
+cd backend && go test -cover ./...           # coverage report
+```
+
+### Mocking Pattern (for service tests)
+```go
+// Define interfaces in services package
+type UserRepository interface {
+    FindByEmail(email string) (*models.User, error)
+    Create(user *models.User) error
+    // ...
+}
+
+// Mock in test file
+type mockUserRepo struct {
+    findByEmailFn func(string) (*models.User, error)
+    createFn      func(*models.User) error
+}
+
+func (m *mockUserRepo) FindByEmail(email string) (*models.User, error) {
+    return m.findByEmailFn(email)
+}
+```
+
+## Running the Backend
+```bash
+docker compose up                  # all services (from project root)
+docker compose up backend          # backend only
+docker compose exec backend go test ./...  # run tests inside container
+cd backend && go test ./...        # run tests locally (needs test DB)
+```
+
+## Backend Conventions
+- All API routes under `/api/v1/` prefix
+- JSON request/response with consistent error format: `{"error": "message", "code": "CODE"}`
+- Success format: `{"data": {...}, "message": "optional"}`
+- Paginated lists: `{"data": [...], "meta": {"page", "pageSize", "totalItems", "totalPages"}}`
+- Use database transactions for multi-table writes
+- Never expose `password_hash` in JSON responses (`json:"-"`)
+- Super admin bypasses all permission checks
+- Validate `sortBy` fields against allowlists to prevent SQL injection

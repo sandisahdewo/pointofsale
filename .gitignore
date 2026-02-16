@@ -36,6 +36,10 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
+# Go
+backend/tmp/
+backend/vendor/
+
 # IDE
 .vscode/
 .idea/
