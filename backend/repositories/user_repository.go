@@ -5,6 +5,15 @@ import (
 	"gorm.io/gorm"
 )
 
+// PaginationParams holds pagination and filtering parameters
+type PaginationParams struct {
+	Page     int
+	PageSize int
+	Search   string
+	SortBy   string
+	SortDir  string
+}
+
 // UserRepository defines the interface for user data operations
 type UserRepository interface {
 	Create(user *models.User) error
@@ -12,6 +21,11 @@ type UserRepository interface {
 	FindByID(id uint) (*models.User, error)
 	Update(user *models.User) error
 	FindByIDWithPermissions(id uint) (*models.User, []models.RolePermission, error)
+	// NEW for Stage 3:
+	List(params PaginationParams, status string) ([]models.User, int64, error)
+	Delete(id uint) error
+	SyncRoles(userID uint, roleIDs []uint) error
+	FindByEmailExcluding(email string, excludeID uint) (*models.User, error)
 }
 
 // UserRepositoryImpl implements UserRepository interface
@@ -86,4 +100,92 @@ func (r *UserRepositoryImpl) FindByIDWithPermissions(id uint) (*models.User, []m
 	}
 
 	return &user, rolePermissions, nil
+}
+
+// List returns paginated users with optional search and status filter
+func (r *UserRepositoryImpl) List(params PaginationParams, status string) ([]models.User, int64, error) {
+	var users []models.User
+	var total int64
+
+	// Build base query
+	query := r.db.Model(&models.User{})
+
+	// Apply search filter (name OR email, case-insensitive partial match)
+	if params.Search != "" {
+		searchPattern := "%" + params.Search + "%"
+		query = query.Where("LOWER(name) LIKE LOWER(?) OR LOWER(email) LIKE LOWER(?)", searchPattern, searchPattern)
+	}
+
+	// Apply status filter
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+
+	// Get total count
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// Apply sorting
+	orderClause := params.SortBy + " " + params.SortDir
+	query = query.Order(orderClause)
+
+	// Apply pagination
+	offset := (params.Page - 1) * params.PageSize
+	query = query.Offset(offset).Limit(params.PageSize)
+
+	// Preload roles
+	query = query.Preload("Roles")
+
+	// Execute query
+	if err := query.Find(&users).Error; err != nil {
+		return nil, 0, err
+	}
+
+	return users, total, nil
+}
+
+// Delete removes a user from the database
+func (r *UserRepositoryImpl) Delete(id uint) error {
+	return r.db.Delete(&models.User{}, id).Error
+}
+
+// SyncRoles replaces a user's roles with a new set
+func (r *UserRepositoryImpl) SyncRoles(userID uint, roleIDs []uint) error {
+	// Find user
+	var user models.User
+	if err := r.db.First(&user, userID).Error; err != nil {
+		return err
+	}
+
+	// Clear existing roles
+	if err := r.db.Model(&user).Association("Roles").Clear(); err != nil {
+		return err
+	}
+
+	// If no new roles, we're done
+	if len(roleIDs) == 0 {
+		return nil
+	}
+
+	// Find the new roles
+	var roles []models.Role
+	if err := r.db.Where("id IN ?", roleIDs).Find(&roles).Error; err != nil {
+		return err
+	}
+
+	// Append new roles
+	return r.db.Model(&user).Association("Roles").Append(roles)
+}
+
+// FindByEmailExcluding finds a user by email (case-insensitive), excluding a specific user ID
+func (r *UserRepositoryImpl) FindByEmailExcluding(email string, excludeID uint) (*models.User, error) {
+	var user models.User
+	err := r.db.Where("LOWER(email) = LOWER(?) AND id != ?", email, excludeID).
+		Preload("Roles").
+		First(&user).Error
+	if err != nil {
+		return nil, err
+	}
+	return &user, nil
 }

@@ -21,7 +21,25 @@ import (
 	"github.com/pointofsale/backend/routes"
 	"github.com/pointofsale/backend/seeds"
 	"github.com/pointofsale/backend/services"
+	"github.com/pointofsale/backend/utils"
 )
+
+// userEmailAdapter adapts utils.EmailService to services.UserEmailService interface
+type userEmailAdapter struct {
+	svc *utils.EmailService
+}
+
+func (a *userEmailAdapter) SendUserCredentials(toEmail, userName, tempPassword string) error {
+	return a.svc.SendCredentialsEmail(toEmail, userName, tempPassword)
+}
+
+func (a *userEmailAdapter) SendUserApproved(toEmail, userName string) error {
+	return a.svc.SendAccountApprovedEmail(toEmail, userName)
+}
+
+func (a *userEmailAdapter) SendUserRejected(toEmail, userName string) error {
+	return a.svc.SendRejectionEmail(toEmail, userName)
+}
 
 func main() {
 	// Setup structured logging
@@ -74,24 +92,33 @@ func main() {
 	}
 	slog.Info("connected to Redis")
 
+	// Initialize email service
+	emailService := utils.NewEmailService(cfg.SMTPHost, cfg.SMTPPort, cfg.SMTPFrom)
+
 	// Initialize repositories
 	userRepo := repositories.NewUserRepository(db)
+	roleRepo := repositories.NewRoleRepository(db)
 
 	// Initialize services
-	// Email service is nil for now (will be implemented later)
-	var emailService services.EmailService = nil
 	authService := services.NewAuthService(userRepo, rdb, cfg, emailService)
+	userEmailSvc := &userEmailAdapter{svc: emailService}
+	userService := services.NewUserService(userRepo, rdb, cfg, userEmailSvc)
+	roleService := services.NewRoleService(roleRepo)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTAccessSecret, rdb, userRepo)
+	permMiddleware := middleware.NewPermissionMiddleware(db, rdb)
 
 	// Initialize handlers
 	healthHandler := handlers.NewHealthHandler(db, rdb)
 	authHandler := handlers.NewAuthHandler(authService)
+	userHandler := handlers.NewUserHandler(userService)
+	roleHandler := handlers.NewRoleHandler(roleService)
+	permissionHandler := handlers.NewPermissionHandler(db, rdb)
 
 	// Setup router and routes
 	r := chi.NewRouter()
-	routes.Setup(r, healthHandler, authHandler, authMiddleware, cfg)
+	routes.Setup(r, healthHandler, authHandler, userHandler, roleHandler, permissionHandler, authMiddleware, permMiddleware, cfg)
 
 	// Start server
 	addr := fmt.Sprintf(":%s", cfg.AppPort)

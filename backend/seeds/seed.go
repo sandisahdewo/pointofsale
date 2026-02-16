@@ -32,6 +32,11 @@ func Run(db *gorm.DB) error {
 		return err
 	}
 
+	// 5. Seed Test Users
+	if err := seedTestUsers(db); err != nil {
+		return err
+	}
+
 	slog.Info("Database seeded successfully")
 	return nil
 }
@@ -45,8 +50,8 @@ func seedPermissions(db *gorm.DB) error {
 		{Module: "Transaction", Feature: "Purchase Order", Actions: pq.StringArray{"create", "read", "update", "delete", "send", "receive"}},
 		{Module: "Transaction", Feature: "Sale", Actions: pq.StringArray{"create", "read", "update", "delete"}},
 		{Module: "Transaction", Feature: "Stock Adjustment", Actions: pq.StringArray{"create", "read", "update", "delete"}},
-		{Module: "Settings", Feature: "User", Actions: pq.StringArray{"create", "read", "update", "delete"}},
-		{Module: "Settings", Feature: "Role", Actions: pq.StringArray{"create", "read", "update", "delete"}},
+		{Module: "Settings", Feature: "Users", Actions: pq.StringArray{"create", "read", "update", "delete"}},
+		{Module: "Settings", Feature: "Roles & Permissions", Actions: pq.StringArray{"create", "read", "update", "delete"}},
 	}
 
 	for _, perm := range permissions {
@@ -107,8 +112,8 @@ func seedRolePermissions(db *gorm.DB) error {
 			{module: "Transaction", feature: "Purchase Order", actions: []string{"create", "read", "update", "delete", "send", "receive"}},
 			{module: "Transaction", feature: "Sale", actions: []string{"create", "read", "update", "delete"}},
 			{module: "Transaction", feature: "Stock Adjustment", actions: []string{"create", "read", "update", "delete"}},
-			{module: "Settings", feature: "User", actions: []string{"create", "read", "update"}},
-			{module: "Settings", feature: "Role", actions: []string{"read"}},
+			{module: "Settings", feature: "Users", actions: []string{"create", "read", "update"}},
+			{module: "Settings", feature: "Roles & Permissions", actions: []string{"read"}},
 		},
 		"Cashier": {
 			{module: "Master Data", feature: "Product", actions: []string{"read"}},
@@ -206,6 +211,106 @@ func seedSuperAdminUser(db *gorm.DB) error {
 		}
 	} else {
 		slog.Info("super admin user already exists, skipping")
+	}
+
+	return nil
+}
+
+func seedTestUsers(db *gorm.DB) error {
+	// Hash the common test password
+	hashedPassword, err := utils.HashPassword("Password@123")
+	if err != nil {
+		return err
+	}
+
+	// Get roles
+	var managerRole, cashierRole, warehouseRole, accountantRole models.Role
+	db.Where("name = ?", "Manager").First(&managerRole)
+	db.Where("name = ?", "Cashier").First(&cashierRole)
+	db.Where("name = ?", "Warehouse").First(&warehouseRole)
+	db.Where("name = ?", "Accountant").First(&accountantRole)
+
+	testUsers := []struct {
+		user  models.User
+		roles []models.Role
+	}{
+		{
+			user: models.User{
+				Name:         "Budi Santoso",
+				Email:        "budi@pointofsale.com",
+				PasswordHash: hashedPassword,
+				Phone:        "+62-812-0000-0002",
+				Status:       "active",
+				IsSuperAdmin: false,
+			},
+			roles: []models.Role{managerRole},
+		},
+		{
+			user: models.User{
+				Name:         "Siti Rahayu",
+				Email:        "siti@pointofsale.com",
+				PasswordHash: hashedPassword,
+				Phone:        "+62-812-0000-0003",
+				Status:       "active",
+				IsSuperAdmin: false,
+			},
+			roles: []models.Role{cashierRole},
+		},
+		{
+			user: models.User{
+				Name:         "Ahmad Wijaya",
+				Email:        "ahmad@pointofsale.com",
+				PasswordHash: hashedPassword,
+				Phone:        "+62-812-0000-0004",
+				Status:       "active",
+				IsSuperAdmin: false,
+			},
+			roles: []models.Role{warehouseRole, accountantRole},
+		},
+		{
+			user: models.User{
+				Name:         "Dewi Lestari",
+				Email:        "dewi@pointofsale.com",
+				PasswordHash: hashedPassword,
+				Phone:        "+62-812-0000-0005",
+				Status:       "inactive",
+				IsSuperAdmin: false,
+			},
+			roles: []models.Role{cashierRole},
+		},
+		{
+			user: models.User{
+				Name:         "Rizky Pratama",
+				Email:        "rizky@pointofsale.com",
+				PasswordHash: hashedPassword,
+				Phone:        "+62-812-0000-0006",
+				Status:       "pending",
+				IsSuperAdmin: false,
+			},
+			roles: []models.Role{},
+		},
+	}
+
+	for _, tu := range testUsers {
+		var existingUser models.User
+		if err := db.Where("email = ?", tu.user.Email).First(&existingUser).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				if err := db.Create(&tu.user).Error; err != nil {
+					return err
+				}
+
+				// Assign roles
+				if len(tu.roles) > 0 {
+					if err := db.Model(&tu.user).Association("Roles").Append(tu.roles); err != nil {
+						return err
+					}
+				}
+
+				slog.Info("created test user", "email", tu.user.Email)
+			} else {
+				return err
+			}
+		}
 	}
 
 	return nil

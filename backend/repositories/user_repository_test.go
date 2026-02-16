@@ -313,3 +313,451 @@ func TestFindUserByIDWithPermissions_NotExists_ReturnsError(t *testing.T) {
 	assert.Nil(t, foundUser)
 	assert.Nil(t, rolePermissions)
 }
+
+// NEW TESTS FOR STAGE 3 - Task #4
+
+func TestListUsers_Pagination_ReturnsCorrectPage(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create 15 test users
+	for i := 1; i <= 15; i++ {
+		testutil.CreateTestUser(t, db, func(u *models.User) {
+			u.Name = "User " + string(rune(i))
+		})
+	}
+
+	// Request page 1 with page size 10
+	params := PaginationParams{
+		Page:     1,
+		PageSize: 10,
+		SortBy:   "id",
+		SortDir:  "asc",
+	}
+
+	users, total, err := repo.List(params, "")
+	require.NoError(t, err)
+	assert.Len(t, users, 10, "should return 10 users")
+	assert.Equal(t, int64(15), total, "total count should be 15")
+
+	// Request page 2
+	params.Page = 2
+	users, total, err = repo.List(params, "")
+	require.NoError(t, err)
+	assert.Len(t, users, 5, "should return 5 users on page 2")
+	assert.Equal(t, int64(15), total, "total count should still be 15")
+}
+
+func TestListUsers_SearchByName_FiltersCorrectly(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create test users with different names
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "Alice Johnson"
+	})
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "Bob Smith"
+	})
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "Charlie Johnson"
+	})
+
+	// Search for "Johnson" (case-insensitive partial match)
+	params := PaginationParams{
+		Page:     1,
+		PageSize: 10,
+		Search:   "johnson",
+		SortBy:   "id",
+		SortDir:  "asc",
+	}
+
+	users, total, err := repo.List(params, "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), total, "should find 2 users with 'Johnson' in name")
+	assert.Len(t, users, 2)
+}
+
+func TestListUsers_SearchByEmail_FiltersCorrectly(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create test users with different emails
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Email = "alice@company.com"
+	})
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Email = "bob@example.com"
+	})
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Email = "charlie@company.com"
+	})
+
+	// Search for "company" (should match email)
+	params := PaginationParams{
+		Page:     1,
+		PageSize: 10,
+		Search:   "company",
+		SortBy:   "id",
+		SortDir:  "asc",
+	}
+
+	users, total, err := repo.List(params, "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), total, "should find 2 users with 'company' in email")
+	assert.Len(t, users, 2)
+}
+
+func TestListUsers_FilterByStatus_ReturnsMatchingOnly(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create users with different statuses
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Status = "active"
+	})
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Status = "inactive"
+	})
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Status = "pending"
+	})
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Status = "active"
+	})
+
+	// Filter by "active" status
+	params := PaginationParams{
+		Page:     1,
+		PageSize: 10,
+		SortBy:   "id",
+		SortDir:  "asc",
+	}
+
+	users, total, err := repo.List(params, "active")
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), total, "should find 2 active users")
+	assert.Len(t, users, 2)
+	for _, user := range users {
+		assert.Equal(t, "active", user.Status)
+	}
+}
+
+func TestListUsers_SortByName_ReturnsOrdered(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create users with different names
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "Zoe"
+	})
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "Alice"
+	})
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "Bob"
+	})
+
+	// Sort by name ascending
+	params := PaginationParams{
+		Page:     1,
+		PageSize: 10,
+		SortBy:   "name",
+		SortDir:  "asc",
+	}
+
+	users, total, err := repo.List(params, "")
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), total)
+	assert.Equal(t, "Alice", users[0].Name)
+	assert.Equal(t, "Bob", users[1].Name)
+	assert.Equal(t, "Zoe", users[2].Name)
+
+	// Sort by name descending
+	params.SortDir = "desc"
+	users, _, err = repo.List(params, "")
+	require.NoError(t, err)
+	assert.Equal(t, "Zoe", users[0].Name)
+	assert.Equal(t, "Bob", users[1].Name)
+	assert.Equal(t, "Alice", users[2].Name)
+}
+
+func TestListUsers_CombinedSearchAndFilter_Works(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create users with various names and statuses
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "Alice Johnson"
+		u.Status = "active"
+	})
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "Bob Johnson"
+		u.Status = "inactive"
+	})
+	testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "Charlie Smith"
+		u.Status = "active"
+	})
+
+	// Search for "Johnson" AND status "active"
+	params := PaginationParams{
+		Page:     1,
+		PageSize: 10,
+		Search:   "Johnson",
+		SortBy:   "id",
+		SortDir:  "asc",
+	}
+
+	users, total, err := repo.List(params, "active")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), total, "should find only Alice Johnson (active)")
+	assert.Len(t, users, 1)
+	assert.Equal(t, "Alice Johnson", users[0].Name)
+}
+
+func TestListUsers_PreloadsRoles(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create role
+	role := testutil.CreateTestRole(t, db, func(r *models.Role) {
+		r.Name = "Manager"
+	})
+
+	// Create user with role
+	user := testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "User With Role"
+	})
+	err := db.Model(&user).Association("Roles").Append(role)
+	require.NoError(t, err)
+
+	// List users - should preload roles
+	params := PaginationParams{
+		Page:     1,
+		PageSize: 10,
+		SortBy:   "id",
+		SortDir:  "asc",
+	}
+
+	users, _, err := repo.List(params, "")
+	require.NoError(t, err)
+
+	// Find our user
+	var foundUser *models.User
+	for _, u := range users {
+		if u.ID == user.ID {
+			foundUser = &u
+			break
+		}
+	}
+	require.NotNil(t, foundUser, "should find our test user")
+	assert.Len(t, foundUser.Roles, 1, "should preload roles")
+	assert.Equal(t, "Manager", foundUser.Roles[0].Name)
+}
+
+func TestDeleteUser_Exists_RemovesUser(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create a user
+	user := testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "To Be Deleted"
+	})
+	userID := user.ID
+
+	// Delete the user
+	err := repo.Delete(userID)
+	require.NoError(t, err)
+
+	// Verify user is deleted
+	_, err = repo.FindByID(userID)
+	assert.Error(t, err, "should not find deleted user")
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+}
+
+func TestDeleteUser_CascadesUserRoles(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create role
+	role := testutil.CreateTestRole(t, db, func(r *models.Role) {
+		r.Name = "Test Role"
+	})
+
+	// Create user with role
+	user := testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "User With Role"
+	})
+	err := db.Model(&user).Association("Roles").Append(role)
+	require.NoError(t, err)
+
+	// Verify user has role
+	foundUser, err := repo.FindByID(user.ID)
+	require.NoError(t, err)
+	assert.Len(t, foundUser.Roles, 1)
+
+	// Delete user
+	err = repo.Delete(user.ID)
+	require.NoError(t, err)
+
+	// Verify user_roles junction table entry is also deleted (cascade)
+	var count int64
+	err = db.Table("user_roles").Where("user_id = ?", user.ID).Count(&count).Error
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), count, "user_roles entries should be deleted via cascade")
+}
+
+func TestSyncRoles_ReplacesExistingRoles(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create roles
+	role1 := testutil.CreateTestRole(t, db, func(r *models.Role) {
+		r.Name = "Role 1"
+	})
+	role2 := testutil.CreateTestRole(t, db, func(r *models.Role) {
+		r.Name = "Role 2"
+	})
+	role3 := testutil.CreateTestRole(t, db, func(r *models.Role) {
+		r.Name = "Role 3"
+	})
+
+	// Create user with roles 1 and 2
+	user := testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "User"
+	})
+	err := db.Model(&user).Association("Roles").Append([]models.Role{*role1, *role2})
+	require.NoError(t, err)
+
+	// Verify initial roles
+	foundUser, err := repo.FindByID(user.ID)
+	require.NoError(t, err)
+	assert.Len(t, foundUser.Roles, 2)
+
+	// Sync to new set of roles (role2 and role3)
+	err = repo.SyncRoles(user.ID, []uint{role2.ID, role3.ID})
+	require.NoError(t, err)
+
+	// Verify roles are replaced
+	foundUser, err = repo.FindByID(user.ID)
+	require.NoError(t, err)
+	assert.Len(t, foundUser.Roles, 2, "should have 2 roles after sync")
+
+	// Check role names
+	roleNames := make([]string, len(foundUser.Roles))
+	for i, role := range foundUser.Roles {
+		roleNames[i] = role.Name
+	}
+	assert.Contains(t, roleNames, "Role 2")
+	assert.Contains(t, roleNames, "Role 3")
+	assert.NotContains(t, roleNames, "Role 1", "Role 1 should be removed")
+}
+
+func TestSyncRoles_EmptyRoleIDs_RemovesAllRoles(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create role
+	role := testutil.CreateTestRole(t, db, func(r *models.Role) {
+		r.Name = "Role"
+	})
+
+	// Create user with role
+	user := testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Name = "User"
+	})
+	err := db.Model(&user).Association("Roles").Append(role)
+	require.NoError(t, err)
+
+	// Sync to empty role list
+	err = repo.SyncRoles(user.ID, []uint{})
+	require.NoError(t, err)
+
+	// Verify all roles are removed
+	foundUser, err := repo.FindByID(user.ID)
+	require.NoError(t, err)
+	assert.Empty(t, foundUser.Roles, "should have no roles after syncing with empty list")
+}
+
+func TestFindByEmailExcluding_ExistsButNotExcluded_ReturnsUser(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create users
+	user1 := testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Email = "duplicate@example.com"
+	})
+	user2 := testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Email = "unique@example.com"
+	})
+
+	// Find "duplicate@example.com" excluding user2 (should find user1)
+	found, err := repo.FindByEmailExcluding("duplicate@example.com", user2.ID)
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	assert.Equal(t, user1.ID, found.ID)
+}
+
+func TestFindByEmailExcluding_ExistsAndExcluded_ReturnsNotFound(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create user
+	user := testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Email = "test@example.com"
+	})
+
+	// Find same email excluding this user (should return not found)
+	found, err := repo.FindByEmailExcluding("test@example.com", user.ID)
+	assert.Error(t, err)
+	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	assert.Nil(t, found)
+}
+
+func TestFindByEmailExcluding_CaseInsensitive_Works(t *testing.T) {
+	db := testutil.SetupTestDB(t)
+	defer testutil.CleanupTestDB(t, db)
+
+	repo := NewUserRepository(db)
+
+	// Create users
+	user1 := testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Email = "Test@Example.com"
+	})
+	user2 := testutil.CreateTestUser(t, db, func(u *models.User) {
+		u.Email = "other@example.com"
+	})
+
+	// Find with different case, excluding user2
+	found, err := repo.FindByEmailExcluding("test@example.com", user2.ID)
+	require.NoError(t, err)
+	require.NotNil(t, found)
+	assert.Equal(t, user1.ID, found.ID)
+}
