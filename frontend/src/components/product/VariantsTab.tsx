@@ -1,9 +1,8 @@
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import Input from '@/components/ui/Input';
 import Button from '@/components/ui/Button';
-import Select from '@/components/ui/Select';
 import MultiSelect from '@/components/ui/MultiSelect';
 import TagInput from '@/components/ui/TagInput';
 import ImageUpload from '@/components/ui/ImageUpload';
@@ -77,9 +76,13 @@ export default function VariantsTab({
   onAttributesChange,
   onVariantsChange,
 }: VariantsTabProps) {
-  const { getActiveRacks } = useRackStore();
+  const { getActiveRacks, fetchAllRacks } = useRackStore();
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [showRegenerateConfirm, setShowRegenerateConfirm] = useState(false);
+
+  useEffect(() => {
+    void fetchAllRacks({ active: true }).catch(() => {});
+  }, [fetchAllRacks]);
 
   const rackOptions = getActiveRacks().map((r) => ({
     value: String(r.id),

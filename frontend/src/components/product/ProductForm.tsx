@@ -19,6 +19,7 @@ import { useProductStore, Product, PriceSetting, MarkupType, ProductUnit, Varian
 import { useCategoryStore } from '@/stores/useCategoryStore';
 import { useSupplierStore } from '@/stores/useSupplierStore';
 import { useToastStore } from '@/stores/useToastStore';
+import { ApiError } from '@/lib/api';
 import Link from 'next/link';
 
 interface ProductFormProps {
@@ -73,8 +74,8 @@ const TABS = [
 export default function ProductForm({ mode, initialProduct }: ProductFormProps) {
   const router = useRouter();
   const { addProduct, updateProduct } = useProductStore();
-  const { categories } = useCategoryStore();
-  const { getActiveSuppliers } = useSupplierStore();
+  const { categories, fetchAllCategories } = useCategoryStore();
+  const { getActiveSuppliers, fetchAllSuppliers } = useSupplierStore();
   const { addToast } = useToastStore();
 
   const [form, setForm] = useState<FormState>(
@@ -173,6 +174,25 @@ export default function ProductForm({ mode, initialProduct }: ProductFormProps) 
     const currentSnapshot = JSON.stringify({ form, units, variantAttributes, variants });
     setIsDirty(currentSnapshot !== initialSnapshot.current);
   }, [form, units, variantAttributes, variants]);
+
+  useEffect(() => {
+    const loadMasterData = async () => {
+      try {
+        await Promise.all([
+          fetchAllCategories(),
+          fetchAllSuppliers({ active: true }),
+        ]);
+      } catch (error) {
+        if (error instanceof ApiError) {
+          addToast(error.message, 'error');
+        } else {
+          addToast('Failed to load categories and suppliers', 'error');
+        }
+      }
+    };
+
+    void loadMasterData();
+  }, [fetchAllCategories, fetchAllSuppliers, addToast]);
 
   const handlePriceSettingChange = (value: PriceSetting) => {
     if (form.priceSetting === value) return;

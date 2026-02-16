@@ -13,6 +13,7 @@ import { useProductStore } from '@/stores/useProductStore';
 import { useSupplierStore } from '@/stores/useSupplierStore';
 import { useToastStore } from '@/stores/useToastStore';
 import { useCategoryStore } from '@/stores/useCategoryStore';
+import { ApiError } from '@/lib/api';
 import Link from 'next/link';
 
 interface PurchaseOrderFormProps {
@@ -32,9 +33,9 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
   const router = useRouter();
   const { addPurchaseOrder, updatePurchaseOrder } = usePurchaseOrderStore();
   const { products } = useProductStore();
-  const { suppliers, getActiveSuppliers } = useSupplierStore();
+  const { suppliers, getActiveSuppliers, fetchAllSuppliers } = useSupplierStore();
   const { addToast } = useToastStore();
-  const { categories } = useCategoryStore();
+  const { categories, fetchAllCategories } = useCategoryStore();
 
   const [form, setForm] = useState<FormState>({
     supplierId: initialPO?.supplierId || 0,
@@ -61,68 +62,106 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
 
   const activeSuppliers = getActiveSuppliers();
 
-  // Auto-populate products when supplier is selected
   useEffect(() => {
-    if (form.supplierId && mode === 'add') {
-      const relevantProducts = products.filter(
-        (p) =>
-          p.supplierIds.includes(form.supplierId) ||
-          p.supplierIds.length === 0
-      );
+    const loadMasterData = async () => {
+      try {
+        await Promise.all([
+          fetchAllSuppliers(),
+          fetchAllCategories(),
+        ]);
+      } catch (error) {
+        if (error instanceof ApiError) {
+          addToast(error.message, 'error');
+        } else {
+          addToast('Failed to load suppliers and categories', 'error');
+        }
+      }
+    };
 
-      const newItems: PurchaseOrderItem[] = [];
-      relevantProducts.forEach((product) => {
-        product.variants.forEach((variant) => {
-          const variantLabel =
-            Object.keys(variant.attributes).length > 0
-              ? Object.entries(variant.attributes)
-                  .map(([_, value]) => value)
-                  .join(' / ')
-              : 'Default';
+    void loadMasterData();
+  }, [fetchAllSuppliers, fetchAllCategories, addToast]);
 
-          const baseUnit = product.units.find((u) => u.isBase);
+  const buildItemsForSupplier = (supplierId: number) => {
+    const relevantProducts = products.filter(
+      (product) => product.supplierIds.includes(supplierId) || product.supplierIds.length === 0,
+    );
 
-          newItems.push({
-            id: crypto.randomUUID(),
-            productId: product.id,
-            productName: product.name,
-            variantId: variant.id,
-            variantLabel,
-            sku: variant.sku,
-            currentStock: variant.currentStock,
-            orderedQty: 0,
-            price: 0,
-            unitId: baseUnit?.id || '',
-            unitName: baseUnit?.name || '',
-          });
+    const items: PurchaseOrderItem[] = [];
+
+    relevantProducts.forEach((product) => {
+      product.variants.forEach((variant) => {
+        const variantLabel =
+          Object.keys(variant.attributes).length > 0
+            ? Object.entries(variant.attributes)
+                .map(([, value]) => value)
+                .join(' / ')
+            : 'Default';
+
+        const baseUnit = product.units.find((unit) => unit.isBase);
+
+        items.push({
+          id: crypto.randomUUID(),
+          productId: product.id,
+          productName: product.name,
+          variantId: variant.id,
+          variantLabel,
+          sku: variant.sku,
+          currentStock: variant.currentStock,
+          orderedQty: 0,
+          price: 0,
+          unitId: baseUnit?.id || '',
+          unitName: baseUnit?.name || '',
         });
       });
+    });
 
-      setForm((f) => ({ ...f, items: newItems }));
-      setExpandedProducts(new Set(relevantProducts.map((p) => p.id)));
+    return {
+      items,
+      expandedProductIds: relevantProducts.map((product) => product.id),
+    };
+  };
+
+  const applySupplierSelection = (supplierId: number) => {
+    const supplier = suppliers.find((item) => item.id === supplierId);
+
+    if (mode === 'add' && supplierId > 0) {
+      const { items, expandedProductIds } = buildItemsForSupplier(supplierId);
+
+      setForm((prev) => ({
+        ...prev,
+        supplierId,
+        supplierName: supplier?.name || '',
+        items,
+      }));
+      setExpandedProducts(new Set(expandedProductIds));
+      return;
     }
-  }, [form.supplierId, mode]);
+
+    setForm((prev) => ({
+      ...prev,
+      supplierId,
+      supplierName: supplier?.name || '',
+      items: mode === 'add' ? [] : prev.items,
+    }));
+
+    if (mode === 'add') {
+      setExpandedProducts(new Set());
+    }
+  };
 
   const handleSupplierChange = (supplierId: number) => {
-    if (form.items.length > 0 && supplierId !== form.supplierId) {
+    if (mode === 'add' && form.items.length > 0 && supplierId !== form.supplierId) {
       setConfirmModal({
         isOpen: true,
         title: 'Change Supplier',
         message: 'Changing the supplier will reset the product list. Continue?',
         onConfirm: () => {
-          const supplier = suppliers.find((s) => s.id === supplierId);
-          setForm({
-            ...form,
-            supplierId,
-            supplierName: supplier?.name || '',
-            items: [],
-          });
-          setConfirmModal({ ...confirmModal, isOpen: false });
+          applySupplierSelection(supplierId);
+          setConfirmModal((prev) => ({ ...prev, isOpen: false }));
         },
       });
     } else {
-      const supplier = suppliers.find((s) => s.id === supplierId);
-      setForm({ ...form, supplierId, supplierName: supplier?.name || '' });
+      applySupplierSelection(supplierId);
     }
   };
 

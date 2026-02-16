@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import AdminLayout from '@/components/layout/AdminLayout';
 import Button from '@/components/ui/Button';
@@ -11,13 +11,14 @@ import Modal from '@/components/ui/Modal';
 import { useProductStore, Product } from '@/stores/useProductStore';
 import { useCategoryStore } from '@/stores/useCategoryStore';
 import { useToastStore } from '@/stores/useToastStore';
+import { ApiError } from '@/lib/api';
 
 const DEFAULT_PAGE_SIZE = 10;
 
 export default function MasterProductPage() {
   const router = useRouter();
   const { products, deleteProduct } = useProductStore();
-  const { categories } = useCategoryStore();
+  const { categories, fetchAllCategories } = useCategoryStore();
   const { addToast } = useToastStore();
 
   const [search, setSearch] = useState('');
@@ -30,6 +31,22 @@ export default function MasterProductPage() {
   const [isDeleteOpen, setIsDeleteOpen] = useState(false);
   const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
 
+  useEffect(() => {
+    const loadCategories = async () => {
+      try {
+        await fetchAllCategories();
+      } catch (error) {
+        if (error instanceof ApiError) {
+          addToast(error.message, 'error');
+        } else {
+          addToast('Failed to load categories', 'error');
+        }
+      }
+    };
+
+    void loadCategories();
+  }, [fetchAllCategories, addToast]);
+
   // Build a lookup map for category names
   const categoryMap = useMemo(() => {
     const map = new Map<number, string>();
@@ -37,8 +54,10 @@ export default function MasterProductPage() {
     return map;
   }, [categories]);
 
-  const getCategoryName = (categoryId: number) =>
-    categoryMap.get(categoryId) ?? 'Unknown';
+  const getCategoryName = useCallback(
+    (categoryId: number) => categoryMap.get(categoryId) ?? 'Unknown',
+    [categoryMap],
+  );
 
   const filtered = useMemo(() => {
     if (!search) return products;
@@ -76,7 +95,7 @@ export default function MasterProductPage() {
       if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [filtered, sortKey, sortDirection, categoryMap]);
+  }, [filtered, sortKey, sortDirection, getCategoryName]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
   const paginated = sorted.slice(

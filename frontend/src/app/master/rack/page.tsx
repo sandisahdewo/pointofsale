@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import AdminLayout from '@/components/layout/AdminLayout';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -11,14 +11,22 @@ import Toggle from '@/components/ui/Toggle';
 import Badge from '@/components/ui/Badge';
 import { useRackStore, Rack } from '@/stores/useRackStore';
 import { useToastStore } from '@/stores/useToastStore';
+import { ApiError } from '@/lib/api';
 
 const DEFAULT_PAGE_SIZE = 10;
 
 export default function MasterRackPage() {
-  const { racks, addRack, updateRack, deleteRack, isCodeUnique } = useRackStore();
+  const { fetchRacks, createRack, updateRack, deleteRack } = useRackStore();
   const { addToast } = useToastStore();
 
+  const [racks, setRacks] = useState<Rack[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -39,48 +47,43 @@ export default function MasterRackPage() {
   const [formActive, setFormActive] = useState(true);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  const filtered = useMemo(() => {
-    if (!search) return racks;
-    const q = search.toLowerCase();
-    return racks.filter(
-      (r) =>
-        r.name.toLowerCase().includes(q) ||
-        r.code.toLowerCase().includes(q) ||
-        r.location.toLowerCase().includes(q)
-    );
-  }, [racks, search]);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setCurrentPage(1);
+    }, 300);
 
-  const sorted = useMemo(() => {
-    if (!sortKey || !sortDirection) return filtered;
-    return [...filtered].sort((a, b) => {
-      const aVal = (a as unknown as Record<string, unknown>)[sortKey];
-      const bVal = (b as unknown as Record<string, unknown>)[sortKey];
-      if (typeof aVal === 'number' && typeof bVal === 'number') {
-        return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const loadRacks = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetchRacks({
+        page: currentPage,
+        pageSize,
+        search: debouncedSearch || undefined,
+        sortBy: sortKey || undefined,
+        sortDir: sortDirection || undefined,
+      });
+
+      setRacks(response.data);
+      setTotalItems(response.meta.totalItems);
+      setTotalPages(response.meta.totalPages || 1);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to load racks', 'error');
       }
-      if (typeof aVal === 'boolean' && typeof bVal === 'boolean') {
-        return sortDirection === 'asc'
-          ? (aVal ? 1 : 0) - (bVal ? 1 : 0)
-          : (bVal ? 1 : 0) - (aVal ? 1 : 0);
-      }
-      const aStr = String(aVal).toLowerCase();
-      const bStr = String(bVal).toLowerCase();
-      if (aStr < bStr) return sortDirection === 'asc' ? -1 : 1;
-      if (aStr > bStr) return sortDirection === 'asc' ? 1 : -1;
-      return 0;
-    });
-  }, [filtered, sortKey, sortDirection]);
+    } finally {
+      setLoading(false);
+    }
+  }, [currentPage, pageSize, debouncedSearch, sortKey, sortDirection, fetchRacks, addToast]);
 
-  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
-  const paginated = sorted.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
-
-  const handleSearch = (value: string) => {
-    setSearch(value);
-    setCurrentPage(1);
-  };
+  useEffect(() => {
+    loadRacks();
+  }, [loadRacks]);
 
   const handleSort = (key: string, direction: SortDirection) => {
     setSortKey(direction === null ? null : key);
@@ -126,17 +129,13 @@ export default function MasterRackPage() {
     const errors: Record<string, string> = {};
 
     if (!formName.trim()) errors.name = 'Name is required';
-    if (!formCode.trim()) {
-      errors.code = 'Code is required';
-    } else if (!isCodeUnique(formCode.trim(), editingRack?.id)) {
-      errors.code = 'Rack code already exists';
-    }
+    if (!formCode.trim()) errors.code = 'Code is required';
     if (!formLocation.trim()) errors.location = 'Location is required';
 
     const capacity = Number(formCapacity);
     if (!formCapacity.trim()) {
       errors.capacity = 'Capacity is required';
-    } else if (isNaN(capacity) || capacity <= 0) {
+    } else if (Number.isNaN(capacity) || capacity <= 0) {
       errors.capacity = 'Capacity must be a positive number';
     }
 
@@ -144,37 +143,69 @@ export default function MasterRackPage() {
     return Object.keys(errors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateForm()) return;
 
-    const rackData = {
-      name: formName.trim(),
-      code: formCode.trim(),
-      location: formLocation.trim(),
-      capacity: Number(formCapacity),
-      description: formDescription.trim(),
-      active: formActive,
-    };
+    setIsSubmitting(true);
 
-    if (editingRack) {
-      updateRack(editingRack.id, rackData);
-      addToast('Rack updated successfully', 'success');
-    } else {
-      addRack(rackData);
-      addToast('Rack created successfully', 'success');
+    try {
+      const payload = {
+        name: formName.trim(),
+        code: formCode.trim(),
+        location: formLocation.trim(),
+        capacity: Number(formCapacity),
+        description: formDescription.trim(),
+      };
+
+      if (editingRack) {
+        await updateRack(editingRack.id, {
+          ...payload,
+          active: formActive,
+        });
+        addToast('Rack updated successfully', 'success');
+      } else {
+        await createRack(payload);
+        addToast('Rack created successfully', 'success');
+      }
+
+      setIsFormOpen(false);
+      await loadRacks();
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to save rack', 'error');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
-    setIsFormOpen(false);
   };
 
-  const handleDelete = () => {
-    if (deletingRack) {
-      deleteRack(deletingRack.id);
+  const handleDelete = async () => {
+    if (!deletingRack) return;
+
+    setIsSubmitting(true);
+
+    try {
+      await deleteRack(deletingRack.id);
       addToast(`Rack ${deletingRack.name} has been deleted`, 'success');
-      const newTotal = Math.max(1, Math.ceil((filtered.length - 1) / pageSize));
-      if (currentPage > newTotal) setCurrentPage(newTotal);
+
+      if (currentPage > 1 && racks.length === 1) {
+        setCurrentPage((prev) => prev - 1);
+      } else {
+        await loadRacks();
+      }
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to delete rack', 'error');
+      }
+    } finally {
+      setIsSubmitting(false);
+      setIsDeleteOpen(false);
     }
-    setIsDeleteOpen(false);
   };
 
   const columns = [
@@ -186,9 +217,7 @@ export default function MasterRackPage() {
       key: 'capacity',
       label: 'Capacity',
       sortable: false,
-      render: (item: Rack) => (
-        <span className="text-gray-700">{item.capacity}</span>
-      ),
+      render: (item: Rack) => <span className="text-gray-700">{item.capacity}</span>,
     },
     {
       key: 'active',
@@ -216,6 +245,16 @@ export default function MasterRackPage() {
     },
   ];
 
+  if (loading) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        </div>
+      </AdminLayout>
+    );
+  }
+
   return (
     <AdminLayout>
       <div className="space-y-6">
@@ -229,13 +268,13 @@ export default function MasterRackPage() {
             <Input
               placeholder="Search racks..."
               value={search}
-              onChange={(e) => handleSearch(e.target.value)}
+              onChange={(e) => setSearch(e.target.value)}
               className="max-w-sm"
             />
           </div>
           <Table
             columns={columns}
-            data={paginated}
+            data={racks}
             currentPage={currentPage}
             totalPages={totalPages}
             onPageChange={setCurrentPage}
@@ -244,12 +283,11 @@ export default function MasterRackPage() {
             onSort={handleSort}
             pageSize={pageSize}
             onPageSizeChange={handlePageSizeChange}
-            totalItems={sorted.length}
+            totalItems={totalItems}
           />
         </div>
       </div>
 
-      {/* Add/Edit Modal */}
       <Modal
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
@@ -307,9 +345,7 @@ export default function MasterRackPage() {
           />
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Description
-            </label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
             <textarea
               placeholder="Optional description"
               value={formDescription}
@@ -328,15 +364,17 @@ export default function MasterRackPage() {
               type="button"
               variant="outline"
               onClick={() => setIsFormOpen(false)}
+              disabled={isSubmitting}
             >
               Cancel
             </Button>
-            <Button type="submit">{editingRack ? 'Update' : 'Create'}</Button>
+            <Button type="submit" disabled={isSubmitting}>
+              {editingRack ? 'Update' : 'Create'}
+            </Button>
           </div>
         </form>
       </Modal>
 
-      {/* Delete Confirmation Modal */}
       <Modal
         isOpen={isDeleteOpen}
         onClose={() => setIsDeleteOpen(false)}
@@ -350,10 +388,10 @@ export default function MasterRackPage() {
           ? This action cannot be undone.
         </p>
         <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={() => setIsDeleteOpen(false)}>
+          <Button variant="outline" onClick={() => setIsDeleteOpen(false)} disabled={isSubmitting}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={handleDelete}>
+          <Button variant="danger" onClick={handleDelete} disabled={isSubmitting}>
             Delete
           </Button>
         </div>

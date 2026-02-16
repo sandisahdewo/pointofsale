@@ -1,15 +1,16 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import Button from '@/components/ui/Button';
 import Select from '@/components/ui/Select';
 import DatePicker from '@/components/ui/DatePicker';
 import Checkbox from '@/components/ui/Checkbox';
-import { usePurchaseOrderStore, PaymentMethod } from '@/stores/usePurchaseOrderStore';
+import { usePurchaseOrderStore, PaymentMethod, PurchaseOrder } from '@/stores/usePurchaseOrderStore';
 import { useSupplierStore } from '@/stores/useSupplierStore';
 import { useToastStore } from '@/stores/useToastStore';
+import { ApiError } from '@/lib/api';
 
 interface ItemReceiveData {
   id: string;
@@ -20,11 +21,36 @@ interface ItemReceiveData {
   isVerified: boolean;
 }
 
+const WARNING_DISMISS_KEY = 'po_receive_match_warning_dismissed';
+
+function getWarningDismissedPreference(): boolean {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem(WARNING_DISMISS_KEY) === 'true';
+}
+
+function buildInitialItemsData(po?: PurchaseOrder): Record<string, ItemReceiveData> {
+  if (!po) return {};
+
+  const data: Record<string, ItemReceiveData> = {};
+  po.items.forEach((item) => {
+    data[item.id] = {
+      id: item.id,
+      orderedQty: item.orderedQty,
+      receivedQty: item.orderedQty,
+      price: item.price,
+      receivedPrice: item.price,
+      isVerified: true,
+    };
+  });
+
+  return data;
+}
+
 export default function ReceivePurchaseOrderPage() {
   const router = useRouter();
   const params = useParams();
   const { getPurchaseOrder, receivePurchaseOrder } = usePurchaseOrderStore();
-  const { suppliers } = useSupplierStore();
+  const { suppliers, fetchAllSuppliers } = useSupplierStore();
   const { addToast } = useToastStore();
 
   const po = getPurchaseOrder(Number(params.id));
@@ -35,10 +61,26 @@ export default function ReceivePurchaseOrderPage() {
   });
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [bankAccountId, setBankAccountId] = useState('');
-  const [itemsData, setItemsData] = useState<Record<string, ItemReceiveData>>({});
+  const [itemsData, setItemsData] = useState<Record<string, ItemReceiveData>>(() => buildInitialItemsData(po));
   const [errors, setErrors] = useState<Record<string, string>>({});
-  const [showWarning, setShowWarning] = useState(true);
-  const [dontShowAgain, setDontShowAgain] = useState(false);
+  const [dontShowAgain, setDontShowAgain] = useState(() => getWarningDismissedPreference());
+  const [showWarning, setShowWarning] = useState(() => !getWarningDismissedPreference());
+
+  useEffect(() => {
+    const loadSuppliers = async () => {
+      try {
+        await fetchAllSuppliers();
+      } catch (error) {
+        if (error instanceof ApiError) {
+          addToast(error.message, 'error');
+        } else {
+          addToast('Failed to load suppliers', 'error');
+        }
+      }
+    };
+
+    void loadSuppliers();
+  }, [fetchAllSuppliers, addToast]);
 
   useEffect(() => {
     if (!po) {
@@ -48,28 +90,6 @@ export default function ReceivePurchaseOrderPage() {
 
     if (po.status !== 'sent') {
       router.push(`/transaction/purchase/${params.id}`);
-      return;
-    }
-
-    // Initialize items data
-    const data: Record<string, ItemReceiveData> = {};
-    po.items.forEach((item) => {
-      data[item.id] = {
-        id: item.id,
-        orderedQty: item.orderedQty,
-        receivedQty: item.orderedQty,
-        price: item.price,
-        receivedPrice: item.price,
-        isVerified: true,
-      };
-    });
-    setItemsData(data);
-
-    // Check localStorage for dismissed warning
-    const dismissed = localStorage.getItem('po_receive_match_warning_dismissed');
-    if (dismissed === 'true') {
-      setShowWarning(false);
-      setDontShowAgain(true);
     }
   }, [po, router, params.id]);
 
@@ -127,7 +147,7 @@ export default function ReceivePurchaseOrderPage() {
 
   const handleDismissWarning = () => {
     if (dontShowAgain) {
-      localStorage.setItem('po_receive_match_warning_dismissed', 'true');
+      localStorage.setItem(WARNING_DISMISS_KEY, 'true');
     }
     setShowWarning(false);
   };
@@ -181,20 +201,18 @@ export default function ReceivePurchaseOrderPage() {
   };
 
   // Calculate summary
-  const summary = useMemo(() => {
-    const items = Object.values(itemsData);
-    return {
-      subtotal: items.reduce((sum, item) => sum + item.receivedQty * item.receivedPrice, 0),
-      totalItems: items.reduce((sum, item) => sum + item.receivedQty, 0),
-    };
-  }, [itemsData]);
+  const summary = {
+    subtotal: Object.values(itemsData).reduce(
+      (sum, item) => sum + item.receivedQty * item.receivedPrice,
+      0,
+    ),
+    totalItems: Object.values(itemsData).reduce((sum, item) => sum + item.receivedQty, 0),
+  };
 
   // Check if all items match
-  const allItemsMatch = useMemo(() => {
-    return Object.values(itemsData).every(
-      (item) => item.receivedQty === item.orderedQty && item.receivedPrice === item.price
-    );
-  }, [itemsData]);
+  const allItemsMatch = Object.values(itemsData).every(
+    (item) => item.receivedQty === item.orderedQty && item.receivedPrice === item.price,
+  );
 
   // Group items by product
   const itemsByProduct = po.items.reduce((acc, item) => {
@@ -296,7 +314,7 @@ export default function ReceivePurchaseOrderPage() {
                     checked={dontShowAgain}
                     onChange={(checked) => setDontShowAgain(checked)}
                   />
-                  I understand, don't show this message again.
+                  I understand, don&apos;t show this message again.
                 </label>
               </div>
               <button

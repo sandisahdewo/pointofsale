@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import AdminLayout from '@/components/layout/AdminLayout';
 import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
@@ -9,14 +9,22 @@ import type { SortDirection } from '@/components/ui/Table';
 import Modal from '@/components/ui/Modal';
 import { useCategoryStore, Category } from '@/stores/useCategoryStore';
 import { useToastStore } from '@/stores/useToastStore';
+import { ApiError } from '@/lib/api';
 
 const DEFAULT_PAGE_SIZE = 10;
 
 export default function MasterCategoryPage() {
-  const { categories, addCategory, updateCategory, deleteCategory } = useCategoryStore();
+  const { fetchCategories, createCategory, updateCategory, deleteCategory } = useCategoryStore();
   const { addToast } = useToastStore();
 
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [totalItems, setTotalItems] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -33,42 +41,43 @@ export default function MasterCategoryPage() {
   const [formDescription, setFormDescription] = useState('');
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  const filtered = useMemo(() => {
-    if (!search) return categories;
-    const q = search.toLowerCase();
-    return categories.filter(
-      (c) =>
-        c.name.toLowerCase().includes(q) ||
-        c.description.toLowerCase().includes(q)
-    );
-  }, [categories, search]);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search);
+      setCurrentPage(1);
+    }, 300);
 
-  const sorted = useMemo(() => {
-    if (!sortKey || !sortDirection) return filtered;
-    return [...filtered].sort((a, b) => {
-      const aVal = (a as unknown as Record<string, unknown>)[sortKey];
-      const bVal = (b as unknown as Record<string, unknown>)[sortKey];
-      if (typeof aVal === 'number' && typeof bVal === 'number') {
-        return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  const loadCategories = useCallback(async () => {
+    setLoading(true);
+    try {
+      const response = await fetchCategories({
+        page: currentPage,
+        pageSize,
+        search: debouncedSearch || undefined,
+        sortBy: sortKey || undefined,
+        sortDir: sortDirection || undefined,
+      });
+
+      setCategories(response.data);
+      setTotalItems(response.meta.totalItems);
+      setTotalPages(response.meta.totalPages || 1);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to load categories', 'error');
       }
-      const aStr = String(aVal).toLowerCase();
-      const bStr = String(bVal).toLowerCase();
-      if (aStr < bStr) return sortDirection === 'asc' ? -1 : 1;
-      if (aStr > bStr) return sortDirection === 'asc' ? 1 : -1;
-      return 0;
-    });
-  }, [filtered, sortKey, sortDirection]);
+    } finally {
+      setLoading(false);
+    }
+  }, [currentPage, pageSize, debouncedSearch, sortKey, sortDirection, fetchCategories, addToast]);
 
-  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
-  const paginated = sorted.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize
-  );
-
-  const handleSearch = (value: string) => {
-    setSearch(value);
-    setCurrentPage(1);
-  };
+  useEffect(() => {
+    loadCategories();
+  }, [loadCategories]);
 
   const handleSort = (key: string, direction: SortDirection) => {
     setSortKey(direction === null ? null : key);
@@ -105,39 +114,66 @@ export default function MasterCategoryPage() {
   const validateForm = () => {
     const errors: Record<string, string> = {};
     if (!formName.trim()) errors.name = 'Name is required';
-    if (!formDescription.trim()) errors.description = 'Description is required';
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validateForm()) return;
 
-    if (editingCategory) {
-      updateCategory(editingCategory.id, {
-        name: formName.trim(),
-        description: formDescription.trim(),
-      });
-      addToast('Category updated successfully', 'success');
-    } else {
-      addCategory({
-        name: formName.trim(),
-        description: formDescription.trim(),
-      });
-      addToast('Category added successfully', 'success');
+    setIsSubmitting(true);
+    try {
+      if (editingCategory) {
+        await updateCategory(editingCategory.id, {
+          name: formName.trim(),
+          description: formDescription.trim(),
+        });
+        addToast('Category updated successfully', 'success');
+      } else {
+        await createCategory({
+          name: formName.trim(),
+          description: formDescription.trim(),
+        });
+        addToast('Category created successfully', 'success');
+      }
+
+      setIsFormOpen(false);
+      await loadCategories();
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to save category', 'error');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
-    setIsFormOpen(false);
   };
 
-  const handleDelete = () => {
-    if (deletingCategory) {
-      deleteCategory(deletingCategory.id);
+  const handleDelete = async () => {
+    if (!deletingCategory) return;
+
+    setIsSubmitting(true);
+    try {
+      await deleteCategory(deletingCategory.id);
       addToast('Category deleted successfully', 'success');
-      const newTotal = Math.max(1, Math.ceil((filtered.length - 1) / pageSize));
-      if (currentPage > newTotal) setCurrentPage(newTotal);
+
+      if (currentPage > 1 && categories.length === 1) {
+        setCurrentPage((prev) => prev - 1);
+      } else {
+        await loadCategories();
+      }
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to delete category', 'error');
+      }
+    } finally {
+      setIsSubmitting(false);
+      setIsDeleteOpen(false);
     }
-    setIsDeleteOpen(false);
   };
 
   const columns = [
@@ -160,6 +196,16 @@ export default function MasterCategoryPage() {
     },
   ];
 
+  if (loading) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center py-20">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+        </div>
+      </AdminLayout>
+    );
+  }
+
   return (
     <AdminLayout>
       <div className="space-y-6">
@@ -173,13 +219,13 @@ export default function MasterCategoryPage() {
             <Input
               placeholder="Search categories..."
               value={search}
-              onChange={(e) => handleSearch(e.target.value)}
+              onChange={(e) => setSearch(e.target.value)}
               className="max-w-sm"
             />
           </div>
           <Table
             columns={columns}
-            data={paginated}
+            data={categories}
             currentPage={currentPage}
             totalPages={totalPages}
             onPageChange={setCurrentPage}
@@ -188,12 +234,11 @@ export default function MasterCategoryPage() {
             onSort={handleSort}
             pageSize={pageSize}
             onPageSizeChange={handlePageSizeChange}
-            totalItems={sorted.length}
+            totalItems={totalItems}
           />
         </div>
       </div>
 
-      {/* Add/Edit Modal */}
       <Modal
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
@@ -204,12 +249,16 @@ export default function MasterCategoryPage() {
             label="Name"
             placeholder="Category name"
             value={formName}
-            onChange={(e) => setFormName(e.target.value)}
+            onChange={(e) => {
+              setFormName(e.target.value);
+              setFormErrors((prev) => ({ ...prev, name: '' }));
+            }}
             error={formErrors.name}
+            required
           />
           <Input
             label="Description"
-            placeholder="Category description"
+            placeholder="Category description (optional)"
             value={formDescription}
             onChange={(e) => setFormDescription(e.target.value)}
             error={formErrors.description}
@@ -219,17 +268,17 @@ export default function MasterCategoryPage() {
               type="button"
               variant="outline"
               onClick={() => setIsFormOpen(false)}
+              disabled={isSubmitting}
             >
               Cancel
             </Button>
-            <Button type="submit">
+            <Button type="submit" disabled={isSubmitting}>
               {editingCategory ? 'Update' : 'Add'}
             </Button>
           </div>
         </form>
       </Modal>
 
-      {/* Delete Confirmation Modal */}
       <Modal
         isOpen={isDeleteOpen}
         onClose={() => setIsDeleteOpen(false)}
@@ -241,10 +290,10 @@ export default function MasterCategoryPage() {
           undone.
         </p>
         <div className="flex justify-end gap-2">
-          <Button variant="outline" onClick={() => setIsDeleteOpen(false)}>
+          <Button variant="outline" onClick={() => setIsDeleteOpen(false)} disabled={isSubmitting}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={handleDelete}>
+          <Button variant="danger" onClick={handleDelete} disabled={isSubmitting}>
             Delete
           </Button>
         </div>
