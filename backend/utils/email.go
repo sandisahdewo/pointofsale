@@ -18,6 +18,12 @@ var passwordResetTemplate string
 //go:embed templates/account_approved.html
 var accountApprovedTemplate string
 
+//go:embed templates/credentials.html
+var credentialsTemplate string
+
+//go:embed templates/rejection.html
+var rejectionTemplate string
+
 // EmailService handles email sending operations.
 type EmailService struct {
 	host string
@@ -60,6 +66,26 @@ func (s *EmailService) SendAccountApprovedEmail(toEmail, userName string) error 
 		"UserName": userName,
 	}
 	return s.sendEmail(toEmail, subject, accountApprovedTemplate, data)
+}
+
+// SendCredentialsEmail sends account credentials for admin-created users.
+func (s *EmailService) SendCredentialsEmail(toEmail, userName, tempPassword string) error {
+	subject := "Point of Sale — Your Account Credentials"
+	data := map[string]string{
+		"UserName":     userName,
+		"Email":        toEmail,
+		"TempPassword": tempPassword,
+	}
+	return s.sendEmail(toEmail, subject, credentialsTemplate, data)
+}
+
+// SendRejectionEmail sends account rejection notification.
+func (s *EmailService) SendRejectionEmail(toEmail, userName string) error {
+	subject := "Point of Sale — Registration Not Approved"
+	data := map[string]string{
+		"UserName": userName,
+	}
+	return s.sendEmail(toEmail, subject, rejectionTemplate, data)
 }
 
 // sendEmail is a generic email sending function.
