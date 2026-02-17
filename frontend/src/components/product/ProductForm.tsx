@@ -73,7 +73,7 @@ const TABS = [
 
 export default function ProductForm({ mode, initialProduct }: ProductFormProps) {
   const router = useRouter();
-  const { addProduct, updateProduct } = useProductStore();
+  const { createProduct, updateProductRemote } = useProductStore();
   const { categories, fetchAllCategories } = useCategoryStore();
   const { getActiveSuppliers, fetchAllSuppliers } = useSupplierStore();
   const { addToast } = useToastStore();
@@ -84,6 +84,7 @@ export default function ProductForm({ mode, initialProduct }: ProductFormProps) 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [activeTab, setActiveTab] = useState('price');
   const [isDirty, setIsDirty] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [units, setUnits] = useState<ProductUnit[]>(initialProduct?.units ?? []);
   const [variantAttributes, setVariantAttributes] = useState<VariantAttribute[]>(
     initialProduct?.variantAttributes ?? []
@@ -285,7 +286,7 @@ export default function ProductForm({ mode, initialProduct }: ProductFormProps) 
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!validate()) return;
 
     const productData = {
@@ -303,16 +304,27 @@ export default function ProductForm({ mode, initialProduct }: ProductFormProps) 
       variants,
     };
 
-    if (mode === 'edit' && initialProduct) {
-      updateProduct(initialProduct.id, productData);
-      addToast('Product updated successfully', 'success');
-    } else {
-      addProduct(productData);
-      addToast('Product added successfully', 'success');
-    }
+    setIsSaving(true);
+    try {
+      if (mode === 'edit' && initialProduct) {
+        await updateProductRemote(initialProduct.id, productData);
+        addToast('Product updated successfully', 'success');
+      } else {
+        await createProduct(productData);
+        addToast('Product added successfully', 'success');
+      }
 
-    setIsDirty(false);
-    router.push('/master/product');
+      setIsDirty(false);
+      router.push('/master/product');
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to save product', 'error');
+      }
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleCancel = () => {
@@ -363,8 +375,8 @@ export default function ProductForm({ mode, initialProduct }: ProductFormProps) 
               <Button variant="outline" onClick={handleCancel}>
                 Cancel
               </Button>
-              <Button onClick={handleSave}>
-                {mode === 'edit' ? 'Update Product' : 'Save Product'}
+              <Button onClick={() => void handleSave()} disabled={isSaving}>
+                {isSaving ? 'Saving...' : mode === 'edit' ? 'Update Product' : 'Save Product'}
               </Button>
             </div>
           </div>

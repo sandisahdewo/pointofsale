@@ -17,10 +17,11 @@ const DEFAULT_PAGE_SIZE = 10;
 
 export default function MasterProductPage() {
   const router = useRouter();
-  const { products, deleteProduct } = useProductStore();
+  const { products, fetchAllProducts, deleteProductRemote } = useProductStore();
   const { categories, fetchAllCategories } = useCategoryStore();
   const { addToast } = useToastStore();
 
+  const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
@@ -32,20 +33,26 @@ export default function MasterProductPage() {
   const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
 
   useEffect(() => {
-    const loadCategories = async () => {
+    const loadData = async () => {
       try {
-        await fetchAllCategories();
+        setIsLoading(true);
+        await Promise.all([
+          fetchAllCategories(),
+          fetchAllProducts(),
+        ]);
       } catch (error) {
         if (error instanceof ApiError) {
           addToast(error.message, 'error');
         } else {
-          addToast('Failed to load categories', 'error');
+          addToast('Failed to load products', 'error');
         }
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    void loadCategories();
-  }, [fetchAllCategories, addToast]);
+    void loadData();
+  }, [fetchAllCategories, fetchAllProducts, addToast]);
 
   // Build a lookup map for category names
   const categoryMap = useMemo(() => {
@@ -124,14 +131,23 @@ export default function MasterProductPage() {
     setIsDeleteOpen(true);
   };
 
-  const handleDelete = () => {
-    if (deletingProduct) {
-      deleteProduct(deletingProduct.id);
+  const handleDelete = async () => {
+    if (!deletingProduct) return;
+
+    try {
+      await deleteProductRemote(deletingProduct.id);
       addToast('Product deleted successfully', 'success');
       const newTotal = Math.max(1, Math.ceil((filtered.length - 1) / pageSize));
       if (currentPage > newTotal) setCurrentPage(newTotal);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to delete product', 'error');
+      }
+    } finally {
+      setIsDeleteOpen(false);
     }
-    setIsDeleteOpen(false);
   };
 
   const columns = [
@@ -219,6 +235,9 @@ export default function MasterProductPage() {
               className="max-w-sm"
             />
           </div>
+          {isLoading ? (
+            <div className="p-8 text-sm text-gray-500">Loading products...</div>
+          ) : (
           <Table
             columns={columns}
             data={paginated}
@@ -232,6 +251,7 @@ export default function MasterProductPage() {
             onPageSizeChange={handlePageSizeChange}
             totalItems={sorted.length}
           />
+          )}
         </div>
       </div>
 
@@ -249,7 +269,7 @@ export default function MasterProductPage() {
           <Button variant="outline" onClick={() => setIsDeleteOpen(false)}>
             Cancel
           </Button>
-          <Button variant="danger" onClick={handleDelete}>
+          <Button variant="danger" onClick={() => void handleDelete()}>
             Delete
           </Button>
         </div>

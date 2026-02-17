@@ -5,6 +5,8 @@ import (
 
 	"github.com/lib/pq"
 	"github.com/pointofsale/backend/models"
+	"github.com/pointofsale/backend/repositories"
+	"github.com/pointofsale/backend/services"
 	"github.com/pointofsale/backend/utils"
 	"gorm.io/gorm"
 )
@@ -49,6 +51,11 @@ func Run(db *gorm.DB) error {
 
 	// 8. Seed Racks
 	if err := seedRacks(db); err != nil {
+		return err
+	}
+
+	// 9. Seed Products
+	if err := seedProducts(db); err != nil {
 		return err
 	}
 
@@ -465,6 +472,198 @@ func seedRacks(db *gorm.DB) error {
 				return err
 			}
 		}
+	}
+
+	return nil
+}
+
+func seedProducts(db *gorm.DB) error {
+	if !db.Migrator().HasTable("products") {
+		return nil
+	}
+
+	// Lookup IDs
+	var categories []models.Category
+	if err := db.Find(&categories).Error; err != nil {
+		return err
+	}
+	categoryByName := make(map[string]uint, len(categories))
+	for _, category := range categories {
+		categoryByName[category.Name] = category.ID
+	}
+
+	var suppliers []models.Supplier
+	if err := db.Find(&suppliers).Error; err != nil {
+		return err
+	}
+	supplierByName := make(map[string]uint, len(suppliers))
+	for _, supplier := range suppliers {
+		supplierByName[supplier.Name] = supplier.ID
+	}
+
+	var racks []models.Rack
+	if err := db.Find(&racks).Error; err != nil {
+		return err
+	}
+	rackByName := make(map[string]uint, len(racks))
+	for _, rack := range racks {
+		rackByName[rack.Name] = rack.ID
+	}
+
+	productService := services.NewProductService(repositories.NewProductRepository(db))
+	markupPercentage := "percentage"
+
+	inputs := []services.CreateProductInput{
+		{
+			Name:         "T-Shirt",
+			Description:  "Premium cotton t-shirt available in multiple colors and sizes",
+			CategoryID:   categoryByName["Clothing"],
+			PriceSetting: "fixed",
+			HasVariants:  true,
+			Status:       "active",
+			SupplierIDs: []uint{
+				supplierByName["PT Sumber Makmur"],
+				supplierByName["CV Jaya Abadi"],
+			},
+			Units: []services.CreateProductUnitInput{
+				{Name: "Pcs", IsBase: true},
+				{Name: "Dozen", ConversionFactor: 12, ConvertsToName: "Pcs"},
+				{Name: "Box", ConversionFactor: 12, ConvertsToName: "Dozen"},
+				{Name: "Bag", ConversionFactor: 50, ConvertsToName: "Pcs"},
+			},
+			Variants: []services.CreateProductVariantInput{
+				{
+					SKU:     "TS-R-S",
+					Barcode: "8901234567890",
+					Attributes: []services.CreateVariantAttributeInput{
+						{AttributeName: "Color", AttributeValue: "Red"},
+						{AttributeName: "Size", AttributeValue: "S"},
+					},
+					PricingTiers: []services.CreateVariantPricingTierInput{
+						{MinQty: 1, Value: 75000},
+						{MinQty: 12, Value: 70000},
+					},
+					RackIDs: []uint{rackByName["Main Display"]},
+				},
+				{
+					SKU:     "TS-B-M",
+					Barcode: "8901234567891",
+					Attributes: []services.CreateVariantAttributeInput{
+						{AttributeName: "Color", AttributeValue: "Blue"},
+						{AttributeName: "Size", AttributeValue: "M"},
+					},
+					PricingTiers: []services.CreateVariantPricingTierInput{
+						{MinQty: 1, Value: 75000},
+						{MinQty: 12, Value: 70000},
+					},
+					RackIDs: []uint{rackByName["Main Display"]},
+				},
+			},
+		},
+		{
+			Name:         "Rice",
+			Description:  "Premium quality white rice",
+			CategoryID:   categoryByName["Food & Beverages"],
+			PriceSetting: "fixed",
+			HasVariants:  false,
+			Status:       "active",
+			SupplierIDs:  []uint{supplierByName["UD Berkah Sentosa"]},
+			Units: []services.CreateProductUnitInput{
+				{Name: "Kg", IsBase: true},
+				{Name: "Karung", ConversionFactor: 50, ConvertsToName: "Kg"},
+				{Name: "Bag", ConversionFactor: 25, ConvertsToName: "Kg"},
+			},
+			Variants: []services.CreateProductVariantInput{
+				{
+					SKU:     "RC-001",
+					Barcode: "8901234567800",
+					PricingTiers: []services.CreateVariantPricingTierInput{
+						{MinQty: 1, Value: 15000},
+						{MinQty: 50, Value: 14000},
+					},
+					RackIDs: []uint{rackByName["Bulk Storage"]},
+				},
+			},
+		},
+		{
+			Name:         "Notebook",
+			Description:  "Lined notebook, A5 size",
+			CategoryID:   categoryByName["Stationery"],
+			PriceSetting: "markup",
+			MarkupType:   &markupPercentage,
+			HasVariants:  false,
+			Status:       "active",
+			SupplierIDs:  []uint{supplierByName["CV Jaya Abadi"]},
+			Units: []services.CreateProductUnitInput{
+				{Name: "Pcs", IsBase: true},
+				{Name: "Carton", ConversionFactor: 48, ConvertsToName: "Pcs"},
+			},
+			Variants: []services.CreateProductVariantInput{
+				{
+					SKU:     "NB-001",
+					Barcode: "8901234567700",
+					PricingTiers: []services.CreateVariantPricingTierInput{
+						{MinQty: 1, Value: 25},
+					},
+					RackIDs: []uint{rackByName["Main Display"]},
+				},
+			},
+		},
+		{
+			Name:         "Cooking Oil",
+			Description:  "Premium vegetable cooking oil",
+			CategoryID:   categoryByName["Household"],
+			PriceSetting: "fixed",
+			HasVariants:  false,
+			Status:       "active",
+			Units: []services.CreateProductUnitInput{
+				{Name: "Liter", IsBase: true},
+			},
+			Variants: []services.CreateProductVariantInput{
+				{
+					SKU:     "CO-001",
+					Barcode: "8901234567600",
+					PricingTiers: []services.CreateVariantPricingTierInput{
+						{MinQty: 1, Value: 28000},
+					},
+					RackIDs: []uint{rackByName["Cold Storage"]},
+				},
+			},
+		},
+	}
+
+	stockBySKU := map[string]int{
+		"TS-R-S": 50,
+		"TS-B-M": 25,
+		"RC-001": 200,
+		"NB-001": 150,
+		"CO-001": 5,
+	}
+
+	for _, input := range inputs {
+		var existing models.Product
+		err := db.Where("name = ?", input.Name).First(&existing).Error
+		if err == nil {
+			continue
+		}
+		if err != gorm.ErrRecordNotFound {
+			return err
+		}
+
+		created, serviceErr := productService.CreateProduct(input)
+		if serviceErr != nil {
+			return serviceErr
+		}
+
+		for sku, stock := range stockBySKU {
+			if err := db.Model(&models.ProductVariant{}).
+				Where("product_id = ? AND sku = ?", created.ID, sku).
+				Update("current_stock", stock).Error; err != nil {
+				return err
+			}
+		}
+
+		slog.Info("created product", "name", input.Name)
 	}
 
 	return nil

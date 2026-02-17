@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -28,6 +29,13 @@ type Config struct {
 	SMTPHost         string
 	SMTPPort         string
 	SMTPFrom         string
+	MinIOEnabled     bool
+	MinIOEndpoint    string
+	MinIOAccessKey   string
+	MinIOSecretKey   string
+	MinIOBucket      string
+	MinIOUseSSL      bool
+	MinIOPublicURL   string
 }
 
 func Load() (*Config, error) {
@@ -64,6 +72,13 @@ func Load() (*Config, error) {
 		SMTPHost:         getEnv("SMTP_HOST", "localhost"),
 		SMTPPort:         getEnv("SMTP_PORT", "1025"),
 		SMTPFrom:         getEnv("SMTP_FROM", "noreply@pointofsale.local"),
+		MinIOEnabled:     getEnvBool("MINIO_ENABLED", false),
+		MinIOEndpoint:    getEnv("MINIO_ENDPOINT", "minio:9000"),
+		MinIOAccessKey:   getEnv("MINIO_ACCESS_KEY", "minioadmin"),
+		MinIOSecretKey:   getEnv("MINIO_SECRET_KEY", "minioadmin"),
+		MinIOBucket:      getEnv("MINIO_BUCKET", "pos-images"),
+		MinIOUseSSL:      getEnvBool("MINIO_USE_SSL", false),
+		MinIOPublicURL:   getEnv("MINIO_PUBLIC_URL", "http://localhost:9000"),
 	}, nil
 }
 
@@ -79,4 +94,16 @@ func getEnv(key, fallback string) string {
 		return val
 	}
 	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	val := os.Getenv(key)
+	if val == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(val)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }

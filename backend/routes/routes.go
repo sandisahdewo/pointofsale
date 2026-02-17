@@ -21,6 +21,7 @@ func Setup(
 	categoryHandler *handlers.CategoryHandler,
 	supplierHandler *handlers.SupplierHandler,
 	rackHandler *handlers.RackHandler,
+	productHandler *handlers.ProductHandler,
 	authMiddleware *middleware.AuthMiddleware,
 	permMiddleware *middleware.PermissionMiddleware,
 	cfg *config.Config,
@@ -120,6 +121,15 @@ func Setup(
 				r.With(permMiddleware.RequirePermission("Master Data", "Product", "create")).Post("/", rackHandler.CreateRack)
 				r.With(permMiddleware.RequirePermission("Master Data", "Product", "update")).Put("/{id}", rackHandler.UpdateRack)
 				r.With(permMiddleware.RequirePermission("Master Data", "Product", "delete")).Delete("/{id}", rackHandler.DeleteRack)
+			})
+
+			// Master Data - Products
+			r.Route("/products", func(r chi.Router) {
+				r.With(permMiddleware.RequirePermission("Master Data", "Product", "read")).Get("/", productHandler.ListProducts)
+				r.With(permMiddleware.RequirePermission("Master Data", "Product", "read")).Get("/{id}", productHandler.GetProduct)
+				r.With(permMiddleware.RequirePermission("Master Data", "Product", "create")).Post("/", productHandler.CreateProduct)
+				r.With(permMiddleware.RequirePermission("Master Data", "Product", "update")).Put("/{id}", productHandler.UpdateProduct)
+				r.With(permMiddleware.RequirePermission("Master Data", "Product", "delete")).Delete("/{id}", productHandler.DeleteProduct)
 			})
 		})
 	})

@@ -21,6 +21,7 @@ import (
 	"github.com/pointofsale/backend/routes"
 	"github.com/pointofsale/backend/seeds"
 	"github.com/pointofsale/backend/services"
+	"github.com/pointofsale/backend/storage"
 	"github.com/pointofsale/backend/utils"
 )
 
@@ -101,6 +102,25 @@ func main() {
 	categoryRepo := repositories.NewCategoryRepository(db)
 	supplierRepo := repositories.NewSupplierRepository(db)
 	rackRepo := repositories.NewRackRepository(db)
+	productRepo := repositories.NewProductRepository(db)
+
+	var imageStorage services.ImageStorage
+	if cfg.MinIOEnabled {
+		minioStorage, err := storage.NewMinIOImageStorage(storage.MinIOConfig{
+			Endpoint:  cfg.MinIOEndpoint,
+			AccessKey: cfg.MinIOAccessKey,
+			SecretKey: cfg.MinIOSecretKey,
+			Bucket:    cfg.MinIOBucket,
+			UseSSL:    cfg.MinIOUseSSL,
+			PublicURL: cfg.MinIOPublicURL,
+		})
+		if err != nil {
+			slog.Error("failed to initialize MinIO storage", "error", err)
+			os.Exit(1)
+		}
+		imageStorage = minioStorage
+		slog.Info("MinIO storage initialized", "endpoint", cfg.MinIOEndpoint, "bucket", cfg.MinIOBucket)
+	}
 
 	// Initialize services
 	authService := services.NewAuthService(userRepo, rdb, cfg, emailService)
@@ -110,6 +130,7 @@ func main() {
 	categoryService := services.NewCategoryService(categoryRepo)
 	supplierService := services.NewSupplierService(supplierRepo)
 	rackService := services.NewRackService(rackRepo)
+	productService := services.NewProductService(productRepo, imageStorage)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTAccessSecret, rdb, userRepo)
@@ -124,10 +145,11 @@ func main() {
 	categoryHandler := handlers.NewCategoryHandler(categoryService)
 	supplierHandler := handlers.NewSupplierHandler(supplierService)
 	rackHandler := handlers.NewRackHandler(rackService)
+	productHandler := handlers.NewProductHandler(productService)
 
 	// Setup router and routes
 	r := chi.NewRouter()
-	routes.Setup(r, healthHandler, authHandler, userHandler, roleHandler, permissionHandler, categoryHandler, supplierHandler, rackHandler, authMiddleware, permMiddleware, cfg)
+	routes.Setup(r, healthHandler, authHandler, userHandler, roleHandler, permissionHandler, categoryHandler, supplierHandler, rackHandler, productHandler, authMiddleware, permMiddleware, cfg)
 
 	// Start server
 	addr := fmt.Sprintf(":%s", cfg.AppPort)
