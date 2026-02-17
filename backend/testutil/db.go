@@ -75,6 +75,55 @@ func CleanupTestDB(t *testing.T, db *gorm.DB) {
 	// No-op: transaction rollback in t.Cleanup handles all data cleanup.
 }
 
+// SetupTestDBNoTx connects to pointofsale_test and runs migrations but does NOT
+// wrap in a transaction. Use this for tests that need concurrent DB access (e.g.,
+// testing pessimistic locking with goroutines). Data is cleaned up via TRUNCATE.
+func SetupTestDBNoTx(t *testing.T) *gorm.DB {
+	t.Helper()
+
+	_ = godotenv.Load("../.env")
+
+	dbHost := getEnvOrDefault("DB_HOST", "localhost")
+	dbPort := getEnvOrDefault("DB_PORT", "5432")
+	dbUser := getEnvOrDefault("DB_USER", "pointofsale")
+	dbPassword := getEnvOrDefault("DB_PASSWORD", "secret")
+	dbSSLMode := getEnvOrDefault("DB_SSLMODE", "disable")
+	dbName := "pointofsale_test"
+
+	dsn := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		dbHost, dbPort, dbUser, dbPassword, dbName, dbSSLMode,
+	)
+
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+	require.NoError(t, err, "failed to connect to test database")
+
+	sqlDB, err := db.DB()
+	require.NoError(t, err, "failed to get sql.DB")
+
+	goose.SetDialect("postgres")
+	err = goose.Up(sqlDB, "../migrations")
+	require.NoError(t, err, "failed to run migrations")
+
+	// Cleanup: truncate tables in reverse dependency order
+	t.Cleanup(func() {
+		tables := []string{
+			"stock_movements",
+			"sales_transaction_items", "sales_transactions",
+			"purchase_order_items", "purchase_orders",
+			"variant_racks", "variant_pricing_tiers", "variant_images", "variant_attributes",
+			"product_variants", "product_units", "product_suppliers", "product_images", "products",
+			"role_permissions", "user_roles", "permissions", "roles", "users",
+			"supplier_bank_accounts", "suppliers", "categories", "racks",
+		}
+		for _, table := range tables {
+			db.Exec("TRUNCATE TABLE " + table + " CASCADE")
+		}
+	})
+
+	return db
+}
+
 // SetupTestRedis connects to Redis for testing using DB 1 (separate from dev DB 0).
 func SetupTestRedis(t *testing.T) *redis.Client {
 	t.Helper()

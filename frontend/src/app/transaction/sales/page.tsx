@@ -10,14 +10,14 @@ import PaymentMethodSelector from '@/components/sales/PaymentMethodSelector';
 import Receipt from '@/components/sales/Receipt';
 import Button from '@/components/ui/Button';
 import { useSalesStore, CheckoutResult } from '@/stores/useSalesStore';
-import { useProductStore } from '@/stores/useProductStore';
 import { useToastStore } from '@/stores/useToastStore';
+import { ApiError } from '@/lib/api';
 
 export default function SalesPage() {
-  const { sessions, activeSessionId, checkout, resetSession } = useSalesStore();
-  const { getProduct } = useProductStore();
+  const { sessions, activeSessionId, productCache, checkout, resetSession } = useSalesStore();
   const { addToast } = useToastStore();
   const [receipt, setReceipt] = useState<CheckoutResult | null>(null);
+  const [isCheckingOut, setIsCheckingOut] = useState(false);
 
   const activeSession = sessions.find((s) => s.id === activeSessionId);
 
@@ -27,15 +27,17 @@ export default function SalesPage() {
     if (activeSession.cart.length === 0) return true;
     if (!activeSession.paymentMethod) return true;
 
-    // Check for stock errors
+    // Check for stock errors using productCache
     for (const cartItem of activeSession.cart) {
-      const product = getProduct(cartItem.productId);
+      const product = productCache[cartItem.productId];
       if (!product) return true;
 
       const variant = product.variants.find((v) => v.id === cartItem.variantId);
       if (!variant) return true;
 
-      const selectedUnit = product.units.find((u) => u.id === cartItem.selectedUnitId);
+      const selectedUnit = product.units.find(
+        (u) => String(u.id) === cartItem.selectedUnitId
+      );
       if (!selectedUnit) return true;
 
       const baseQty = cartItem.quantity * selectedUnit.toBaseUnit;
@@ -43,17 +45,24 @@ export default function SalesPage() {
     }
 
     return false;
-  }, [activeSession, getProduct]);
+  }, [activeSession, productCache]);
 
-  const handleCheckout = () => {
-    if (!activeSession || checkoutDisabled) return;
+  const handleCheckout = async () => {
+    if (!activeSession || checkoutDisabled || isCheckingOut) return;
 
+    setIsCheckingOut(true);
     try {
-      const result = checkout(activeSession.id);
+      const result = await checkout(activeSession.id);
       setReceipt(result);
       addToast('Transaction completed successfully!', 'success');
     } catch (error) {
-      addToast('Checkout failed. Please try again.', 'error');
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Checkout failed. Please try again.', 'error');
+      }
+    } finally {
+      setIsCheckingOut(false);
     }
   };
 
@@ -84,10 +93,10 @@ export default function SalesPage() {
               variant="primary"
               size="lg"
               onClick={handleCheckout}
-              disabled={checkoutDisabled}
+              disabled={checkoutDisabled || isCheckingOut}
               className="w-full"
             >
-              Checkout
+              {isCheckingOut ? 'Processing...' : 'Checkout'}
             </Button>
           </div>
         </div>

@@ -2,7 +2,6 @@
 
 import React, { useMemo } from 'react';
 import { useSalesStore } from '@/stores/useSalesStore';
-import { useProductStore } from '@/stores/useProductStore';
 import { formatCurrency } from '@/utils/currency';
 
 interface CartSummaryProps {
@@ -11,7 +10,7 @@ interface CartSummaryProps {
 
 export default function CartSummary({ sessionId }: CartSummaryProps) {
   const sessions = useSalesStore((state) => state.sessions);
-  const products = useProductStore((state) => state.products);
+  const productCache = useSalesStore((state) => state.productCache);
 
   const session = sessions.find((s) => s.id === sessionId);
 
@@ -27,13 +26,15 @@ export default function CartSummary({ sessionId }: CartSummaryProps) {
     let subtotal = 0;
 
     for (const cartItem of session.cart) {
-      const product = products.find((p) => p.id === cartItem.productId);
+      const product = productCache[cartItem.productId];
       if (!product) continue;
 
       const variant = product.variants.find((v) => v.id === cartItem.variantId);
       if (!variant) continue;
 
-      const selectedUnit = product.units.find((u) => u.id === cartItem.selectedUnitId);
+      const selectedUnit = product.units.find(
+        (u) => String(u.id) === cartItem.selectedUnitId
+      );
       if (!selectedUnit) continue;
 
       // Calculate base quantity for pricing
@@ -59,7 +60,7 @@ export default function CartSummary({ sessionId }: CartSummaryProps) {
       subtotal,
       grandTotal: subtotal, // No tax/discount for now
     };
-  }, [session, products]);
+  }, [session, productCache]);
 
   if (!session) {
     return null;

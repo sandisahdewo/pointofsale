@@ -8,8 +8,12 @@ import DatePicker from '@/components/ui/DatePicker';
 import Textarea from '@/components/ui/Textarea';
 import Input from '@/components/ui/Input';
 import ConfirmModal from '@/components/ui/ConfirmModal';
-import { usePurchaseOrderStore, PurchaseOrder, PurchaseOrderItem } from '@/stores/usePurchaseOrderStore';
-import { useProductStore } from '@/stores/useProductStore';
+import {
+  usePurchaseOrderStore,
+  PurchaseOrder,
+  PurchaseOrderItem,
+  POProductApi,
+} from '@/stores/usePurchaseOrderStore';
 import { useSupplierStore } from '@/stores/useSupplierStore';
 import { useToastStore } from '@/stores/useToastStore';
 import { useCategoryStore } from '@/stores/useCategoryStore';
@@ -31,8 +35,11 @@ interface FormState {
 
 export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderFormProps) {
   const router = useRouter();
-  const { addPurchaseOrder, updatePurchaseOrder } = usePurchaseOrderStore();
-  const { products } = useProductStore();
+  const {
+    createPurchaseOrderRemote,
+    updatePurchaseOrderRemote,
+    fetchProductsForPO,
+  } = usePurchaseOrderStore();
   const { suppliers, getActiveSuppliers, fetchAllSuppliers } = useSupplierStore();
   const { addToast } = useToastStore();
   const { categories, fetchAllCategories } = useCategoryStore();
@@ -45,7 +52,12 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
     items: initialPO?.items || [],
   });
 
+  // Products loaded from the PO products endpoint
+  const [poProducts, setPoProducts] = useState<POProductApi[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(false);
+
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [expandedProducts, setExpandedProducts] = useState<Set<number>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [confirmModal, setConfirmModal] = useState<{
@@ -81,23 +93,49 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
     void loadMasterData();
   }, [fetchAllSuppliers, fetchAllCategories, addToast]);
 
-  const buildItemsForSupplier = (supplierId: number) => {
-    const relevantProducts = products.filter(
-      (product) => product.supplierIds.includes(supplierId) || product.supplierIds.length === 0,
-    );
+  // Load products for initial PO (edit mode)
+  useEffect(() => {
+    if (mode === 'edit' && initialPO?.supplierId) {
+      void loadProductsForSupplier(initialPO.supplierId);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, initialPO?.supplierId]);
 
+  const loadProductsForSupplier = async (supplierId: number) => {
+    if (!supplierId) {
+      setPoProducts([]);
+      return;
+    }
+    try {
+      setIsLoadingProducts(true);
+      const products = await fetchProductsForPO(supplierId);
+      setPoProducts(products);
+      return products;
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to load products for supplier', 'error');
+      }
+      return [];
+    } finally {
+      setIsLoadingProducts(false);
+    }
+  };
+
+  const buildItemsForSupplier = (supplierId: number, products: POProductApi[]) => {
     const items: PurchaseOrderItem[] = [];
+    const expandedProductIds: number[] = [];
 
-    relevantProducts.forEach((product) => {
-      product.variants.forEach((variant) => {
+    products.forEach((product) => {
+      expandedProductIds.push(product.id);
+      (product.variants ?? []).forEach((variant) => {
         const variantLabel =
-          Object.keys(variant.attributes).length > 0
-            ? Object.entries(variant.attributes)
-                .map(([, value]) => value)
-                .join(' / ')
+          (variant.attributes && variant.attributes.length > 0)
+            ? variant.attributes.map((a) => a.attributeValue).join(' / ')
             : 'Default';
 
-        const baseUnit = product.units.find((unit) => unit.isBase);
+        const baseUnit = (product.units ?? []).find((u) => u.isBase);
 
         items.push({
           id: crypto.randomUUID(),
@@ -105,27 +143,25 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
           productName: product.name,
           variantId: variant.id,
           variantLabel,
-          sku: variant.sku,
-          currentStock: variant.currentStock,
+          sku: variant.sku ?? '',
+          currentStock: Number(variant.currentStock ?? 0),
           orderedQty: 0,
           price: 0,
-          unitId: baseUnit?.id || '',
-          unitName: baseUnit?.name || '',
+          unitId: baseUnit ? String(baseUnit.id) : '',
+          unitName: baseUnit?.name ?? '',
         });
       });
     });
 
-    return {
-      items,
-      expandedProductIds: relevantProducts.map((product) => product.id),
-    };
+    return { items, expandedProductIds };
   };
 
-  const applySupplierSelection = (supplierId: number) => {
+  const applySupplierSelection = async (supplierId: number) => {
     const supplier = suppliers.find((item) => item.id === supplierId);
 
     if (mode === 'add' && supplierId > 0) {
-      const { items, expandedProductIds } = buildItemsForSupplier(supplierId);
+      const products = await loadProductsForSupplier(supplierId) ?? [];
+      const { items, expandedProductIds } = buildItemsForSupplier(supplierId, products);
 
       setForm((prev) => ({
         ...prev,
@@ -146,6 +182,7 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
 
     if (mode === 'add') {
       setExpandedProducts(new Set());
+      setPoProducts([]);
     }
   };
 
@@ -156,12 +193,12 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
         title: 'Change Supplier',
         message: 'Changing the supplier will reset the product list. Continue?',
         onConfirm: () => {
-          applySupplierSelection(supplierId);
+          void applySupplierSelection(supplierId);
           setConfirmModal((prev) => ({ ...prev, isOpen: false }));
         },
       });
     } else {
-      applySupplierSelection(supplierId);
+      void applySupplierSelection(supplierId);
     }
   };
 
@@ -174,16 +211,25 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
     });
   };
 
+  const handlePriceChange = (itemId: string, price: number) => {
+    setForm({
+      ...form,
+      items: form.items.map((item) =>
+        item.id === itemId ? { ...item, price: Math.max(0, price) } : item
+      ),
+    });
+  };
+
   const handleUnitChange = (itemId: string, unitId: string) => {
     const item = form.items.find((i) => i.id === itemId);
     if (!item) return;
-    const product = products.find((p) => p.id === item.productId);
-    const unit = product?.units.find((u) => u.id === unitId);
+    const product = poProducts.find((p) => p.id === item.productId);
+    const unit = (product?.units ?? []).find((u) => String(u.id) === unitId);
     if (!unit) return;
     setForm({
       ...form,
       items: form.items.map((i) =>
-        i.id === itemId ? { ...i, unitId: unit.id, unitName: unit.name } : i
+        i.id === itemId ? { ...i, unitId: String(unit.id), unitName: unit.name } : i
       ),
     });
   };
@@ -231,30 +277,46 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!validate()) {
       addToast('Please fix the errors before saving', 'error');
       return;
     }
 
-    const poData = {
+    const orderedItems = form.items.filter((item) => item.orderedQty > 0);
+
+    const input = {
       supplierId: form.supplierId,
-      supplierName: form.supplierName,
       date: form.date,
-      status: 'draft' as const,
-      items: form.items.filter((item) => item.orderedQty > 0),
       notes: form.notes,
+      items: orderedItems.map((item) => ({
+        productId: item.productId,
+        variantId: item.variantId,
+        unitId: Number(item.unitId),
+        orderedQty: item.orderedQty,
+        price: item.price,
+      })),
     };
 
-    if (mode === 'add') {
-      addPurchaseOrder(poData);
-      addToast('Purchase order created successfully', 'success');
-    } else if (initialPO) {
-      updatePurchaseOrder(initialPO.id, poData);
-      addToast('Purchase order updated successfully', 'success');
+    try {
+      setIsSubmitting(true);
+      if (mode === 'add') {
+        await createPurchaseOrderRemote(input);
+        addToast('Purchase order created successfully', 'success');
+      } else if (initialPO) {
+        await updatePurchaseOrderRemote(initialPO.id, input);
+        addToast('Purchase order updated successfully', 'success');
+      }
+      router.push('/transaction/purchase');
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to save purchase order', 'error');
+      }
+    } finally {
+      setIsSubmitting(false);
     }
-
-    router.push('/transaction/purchase');
   };
 
   const handleCancel = () => {
@@ -275,8 +337,10 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
     .map(Number)
     .filter((productId) => {
       if (!searchQuery.trim()) return true;
-      const product = products.find((p) => p.id === productId);
-      return product?.name.toLowerCase().includes(searchQuery.toLowerCase());
+      const product = poProducts.find((p) => p.id === productId);
+      // Fall back to productName from item if product not found in poProducts
+      const productName = product?.name ?? itemsByProduct[productId]?.[0]?.productName ?? '';
+      return productName.toLowerCase().includes(searchQuery.toLowerCase());
     });
 
   // Calculate summary
@@ -295,13 +359,15 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
             href="/transaction/purchase"
             className="text-sm text-gray-600 hover:text-gray-900 flex items-center gap-1"
           >
-            ← Back to Purchase Orders
+            Back to Purchase Orders
           </Link>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={handleCancel}>
+            <Button variant="outline" onClick={handleCancel} disabled={isSubmitting}>
               Cancel
             </Button>
-            <Button onClick={handleSave}>Save</Button>
+            <Button onClick={() => void handleSave()} disabled={isSubmitting}>
+              {isSubmitting ? 'Saving...' : 'Save'}
+            </Button>
           </div>
         </div>
       </div>
@@ -353,12 +419,11 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
           {form.supplierId ? (
             <>
               <p className="text-sm text-gray-600">
-                ⓘ Showing products linked to the selected supplier and products without supplier
-                assignment.
+                Showing products linked to the selected supplier.
               </p>
 
               <Input
-                placeholder="🔍 Search products..."
+                placeholder="Search products..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
@@ -367,18 +432,22 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
                 <p className="text-sm text-red-600">{errors.items}</p>
               )}
 
-              {filteredProductIds.length === 0 ? (
+              {isLoadingProducts ? (
+                <p className="text-sm text-gray-500 text-center py-8">Loading products...</p>
+              ) : filteredProductIds.length === 0 ? (
                 <p className="text-sm text-gray-500 text-center py-8">
                   {searchQuery ? 'No products found matching your search.' : 'No products available for this supplier.'}
                 </p>
               ) : (
                 <div className="space-y-4">
                   {filteredProductIds.map((productId) => {
-                    const product = products.find((p) => p.id === productId);
-                    if (!product) return null;
-
+                    const product = poProducts.find((p) => p.id === productId);
+                    const productName = product?.name ?? itemsByProduct[productId]?.[0]?.productName ?? '';
                     const productItems = itemsByProduct[productId];
                     const isExpanded = expandedProducts.has(productId);
+                    const categoryName = product
+                      ? (categories.find((c) => c.id === product.categoryId)?.name ?? 'Uncategorized')
+                      : '';
 
                     return (
                       <div key={productId} className="border border-gray-200 rounded-lg">
@@ -389,7 +458,7 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
                           <div className="flex items-center gap-2">
                             <span className="text-lg">{isExpanded ? '▼' : '▶'}</span>
                             <h3 className="font-medium text-gray-900">
-                              {product.name} ({categories.find(c => c.id === product.categoryId)?.name || 'Uncategorized'})
+                              {productName}{categoryName ? ` (${categoryName})` : ''}
                             </h3>
                           </div>
                           <Button
@@ -430,42 +499,55 @@ export default function PurchaseOrderForm({ mode, initialPO }: PurchaseOrderForm
                                 </tr>
                               </thead>
                               <tbody>
-                                {productItems.map((item) => (
-                                  <tr key={item.id} className="border-t border-gray-100">
-                                    <td className="px-4 py-2 text-sm text-gray-700">
-                                      {item.variantLabel}
-                                    </td>
-                                    <td className="px-4 py-2 text-sm text-gray-600">{item.sku}</td>
-                                    <td className="px-4 py-2 text-sm text-gray-600">
-                                      {item.currentStock}
-                                    </td>
-                                    <td className="px-4 py-2">
-                                      <select
-                                        value={item.unitId || ''}
-                                        onChange={(e) => handleUnitChange(item.id, e.target.value)}
-                                        className="w-24 rounded-md border border-gray-300 px-2 py-1 text-sm"
-                                      >
-                                        {(products.find((p) => p.id === item.productId)?.units || []).map((unit) => (
-                                          <option key={unit.id} value={unit.id}>
-                                            {unit.name}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </td>
-                                    <td className="px-4 py-2">
-                                      <input
-                                        type="number"
-                                        min="0"
-                                        value={item.orderedQty}
-                                        onChange={(e) =>
-                                          handleQtyChange(item.id, parseInt(e.target.value) || 0)
-                                        }
-                                        className="w-24 rounded-md border border-gray-300 px-2 py-1 text-sm"
-                                      />
-                                    </td>
-                                    <td className="px-4 py-2 text-sm text-gray-600">{item.price}</td>
-                                  </tr>
-                                ))}
+                                {productItems.map((item) => {
+                                  const productUnits = product?.units ?? [];
+                                  return (
+                                    <tr key={item.id} className="border-t border-gray-100">
+                                      <td className="px-4 py-2 text-sm text-gray-700">
+                                        {item.variantLabel}
+                                      </td>
+                                      <td className="px-4 py-2 text-sm text-gray-600">{item.sku}</td>
+                                      <td className="px-4 py-2 text-sm text-gray-600">
+                                        {item.currentStock}
+                                      </td>
+                                      <td className="px-4 py-2">
+                                        <select
+                                          value={item.unitId || ''}
+                                          onChange={(e) => handleUnitChange(item.id, e.target.value)}
+                                          className="w-24 rounded-md border border-gray-300 px-2 py-1 text-sm"
+                                        >
+                                          {productUnits.map((unit) => (
+                                            <option key={unit.id} value={String(unit.id)}>
+                                              {unit.name}
+                                            </option>
+                                          ))}
+                                        </select>
+                                      </td>
+                                      <td className="px-4 py-2">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          value={item.orderedQty}
+                                          onChange={(e) =>
+                                            handleQtyChange(item.id, parseInt(e.target.value) || 0)
+                                          }
+                                          className="w-24 rounded-md border border-gray-300 px-2 py-1 text-sm"
+                                        />
+                                      </td>
+                                      <td className="px-4 py-2">
+                                        <input
+                                          type="number"
+                                          min="0"
+                                          value={item.price}
+                                          onChange={(e) =>
+                                            handlePriceChange(item.id, parseInt(e.target.value) || 0)
+                                          }
+                                          className="w-28 rounded-md border border-gray-300 px-2 py-1 text-sm"
+                                        />
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
                               </tbody>
                             </table>
                           </div>

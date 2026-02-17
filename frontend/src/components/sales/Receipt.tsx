@@ -65,7 +65,7 @@ export default function Receipt({ receipt, onClose }: ReceiptProps) {
               </div>
               <div className="flex justify-between">
                 <span>Transaction:</span>
-                <span>#{receipt.transactionId}</span>
+                <span>{receipt.transactionNumber}</span>
               </div>
             </div>
 

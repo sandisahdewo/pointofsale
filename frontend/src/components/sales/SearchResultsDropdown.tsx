@@ -1,11 +1,11 @@
 'use client';
 
 import React from 'react';
-import { Product } from '@/stores/useProductStore';
+import { SearchProduct, VariantAttribute } from '@/stores/useSalesStore';
 import Button from '@/components/ui/Button';
 
 interface SearchResultsDropdownProps {
-  products: Product[];
+  products: SearchProduct[];
   onSelectVariant: (productId: number, variantId: string) => void;
   onClose: () => void;
 }
@@ -15,12 +15,42 @@ export default function SearchResultsDropdown({
   onSelectVariant,
   onClose,
 }: SearchResultsDropdownProps) {
-  const getImageUrl = (images: string[]): string | null => {
-    return images.length > 0 ? images[0] : null;
+  const getProductImageUrl = (images: { id?: number; imageUrl: string; sortOrder: number }[]): string | null => {
+    if (images.length === 0) return null;
+    const sorted = [...images].sort((a, b) => a.sortOrder - b.sortOrder);
+    return sorted[0].imageUrl;
   };
 
-  const formatAttributes = (attributes: Record<string, string>): string => {
-    return Object.values(attributes).join(', ');
+  const getVariantImageUrl = (images: { imageUrl: string; sortOrder: number }[]): string | null => {
+    if (images.length === 0) return null;
+    const sorted = [...images].sort((a, b) => a.sortOrder - b.sortOrder);
+    return sorted[0].imageUrl;
+  };
+
+  const formatAttributes = (attributes: VariantAttribute[]): string => {
+    return attributes.map((a) => a.attributeValue).join(', ');
+  };
+
+  const PlaceholderImage = ({ size }: { size: 'sm' | 'md' }) => {
+    const sizeClass = size === 'md' ? 'w-12 h-12' : 'w-10 h-10';
+    const iconClass = size === 'md' ? 'w-6 h-6' : 'w-5 h-5';
+    return (
+      <div className={`${sizeClass} bg-gray-200 rounded flex items-center justify-center`}>
+        <svg
+          className={`${iconClass} text-gray-400`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={2}
+            d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
+          />
+        </svg>
+      </div>
+    );
   };
 
   return (
@@ -60,34 +90,21 @@ export default function SearchResultsDropdown({
                   // Product with variants
                   <div>
                     <div className="flex items-center gap-2 mb-2">
-                      {getImageUrl(product.images) ? (
+                      {getProductImageUrl(product.images) ? (
                         <img
-                          src={getImageUrl(product.images)!}
+                          src={getProductImageUrl(product.images)!}
                           alt={product.name}
                           className="w-12 h-12 object-cover rounded"
                         />
                       ) : (
-                        <div className="w-12 h-12 bg-gray-200 rounded flex items-center justify-center">
-                          <svg
-                            className="w-6 h-6 text-gray-400"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
-                            />
-                          </svg>
-                        </div>
+                        <PlaceholderImage size="md" />
                       )}
                       <div className="font-medium text-gray-900">{product.name}</div>
                     </div>
                     <div className="space-y-1 ml-14">
                       {product.variants.map((variant) => {
                         const isOutOfStock = variant.currentStock === 0;
+                        const variantImageUrl = getVariantImageUrl(variant.images);
                         return (
                           <div
                             key={variant.id}
@@ -95,28 +112,14 @@ export default function SearchResultsDropdown({
                               isOutOfStock ? 'bg-red-50' : ''
                             }`}
                           >
-                            {getImageUrl(variant.images) ? (
+                            {variantImageUrl ? (
                               <img
-                                src={getImageUrl(variant.images)!}
+                                src={variantImageUrl}
                                 alt={variant.sku}
                                 className="w-10 h-10 object-cover rounded"
                               />
                             ) : (
-                              <div className="w-10 h-10 bg-gray-200 rounded flex items-center justify-center">
-                                <svg
-                                  className="w-5 h-5 text-gray-400"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  viewBox="0 0 24 24"
-                                >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
-                                  />
-                                </svg>
-                              </div>
+                              <PlaceholderImage size="sm" />
                             )}
                             <div className="flex-1 grid grid-cols-4 gap-2 items-center text-sm">
                               <div className="text-gray-600">{variant.sku}</div>
@@ -146,6 +149,7 @@ export default function SearchResultsDropdown({
                   <div>
                     {product.variants.map((variant) => {
                       const isOutOfStock = variant.currentStock === 0;
+                      const productImageUrl = getProductImageUrl(product.images);
                       return (
                         <div
                           key={variant.id}
@@ -153,28 +157,14 @@ export default function SearchResultsDropdown({
                             isOutOfStock ? 'bg-red-50' : ''
                           }`}
                         >
-                          {getImageUrl(product.images) ? (
+                          {productImageUrl ? (
                             <img
-                              src={getImageUrl(product.images)!}
+                              src={productImageUrl}
                               alt={product.name}
                               className="w-12 h-12 object-cover rounded"
                             />
                           ) : (
-                            <div className="w-12 h-12 bg-gray-200 rounded flex items-center justify-center">
-                              <svg
-                                className="w-6 h-6 text-gray-400"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"
-                                />
-                              </svg>
-                            </div>
+                            <PlaceholderImage size="md" />
                           )}
                           <div className="flex-1 grid grid-cols-4 gap-2 items-center text-sm">
                             <div className="font-medium text-gray-900">{product.name}</div>

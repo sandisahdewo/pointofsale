@@ -359,14 +359,14 @@ func TestDeleteSupplier_ReferencedByPO_Returns409(t *testing.T) {
 	}
 	require.NoError(t, db.Create(supplier).Error)
 
-	// Create a mock purchase_orders table entry if the table exists
-	// Since purchase_orders table may not exist yet, we create it temporarily for testing
-	db.Exec(`CREATE TABLE IF NOT EXISTS purchase_orders (
-		id BIGSERIAL PRIMARY KEY,
-		supplier_id BIGINT NOT NULL REFERENCES suppliers(id),
-		created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-	)`)
-	db.Exec("INSERT INTO purchase_orders (supplier_id) VALUES (?)", supplier.ID)
+	// Create a purchase order referencing this supplier
+	po := &models.PurchaseOrder{
+		PONumber:   "PO-TEST-REF",
+		SupplierID: supplier.ID,
+		Date:       "2026-01-01",
+		Status:     "draft",
+	}
+	require.NoError(t, db.Create(po).Error)
 
 	req := httptest.NewRequest("DELETE", fmt.Sprintf("/api/v1/suppliers/%d", supplier.ID), nil)
 	rr := httptest.NewRecorder()

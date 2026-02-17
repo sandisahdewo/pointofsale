@@ -147,6 +147,140 @@ func CreateTestRack(t *testing.T, db *gorm.DB, overrides ...func(*models.Rack)) 
 	return rack
 }
 
+// CreateTestProduct creates a product with a base unit, a single variant, and a pricing tier.
+// Returns the product with its Units and Variants eagerly loaded.
+func CreateTestProduct(t *testing.T, db *gorm.DB, overrides ...func(*models.Product)) *models.Product {
+	t.Helper()
+
+	category := CreateTestCategory(t, db)
+
+	product := &models.Product{
+		Name:         fmt.Sprintf("Test Product %s", uuid.New().String()[:8]),
+		Description:  "Test product description",
+		CategoryID:   category.ID,
+		PriceSetting: "fixed",
+		HasVariants:  false,
+		Status:       "active",
+	}
+
+	for _, override := range overrides {
+		override(product)
+	}
+
+	err := db.Create(product).Error
+	require.NoError(t, err, "failed to create test product")
+
+	// Create base unit
+	unit := &models.ProductUnit{
+		ProductID:        product.ID,
+		Name:             "Pcs",
+		ConversionFactor: 1,
+		ToBaseUnit:       1,
+		IsBase:           true,
+	}
+	err = db.Create(unit).Error
+	require.NoError(t, err, "failed to create test product unit")
+
+	// Create default variant
+	variantID := uuid.New().String()
+	variant := &models.ProductVariant{
+		ID:           variantID,
+		ProductID:    product.ID,
+		SKU:          fmt.Sprintf("TST-%s", uuid.New().String()[:6]),
+		Barcode:      fmt.Sprintf("890%s", uuid.New().String()[:10]),
+		CurrentStock: 100,
+	}
+	err = db.Create(variant).Error
+	require.NoError(t, err, "failed to create test product variant")
+
+	// Create pricing tier
+	tier := &models.VariantPricingTier{
+		VariantID: variantID,
+		MinQty:    1,
+		Value:     10000,
+	}
+	err = db.Create(tier).Error
+	require.NoError(t, err, "failed to create test pricing tier")
+
+	// Reload product with associations
+	var loaded models.Product
+	err = db.Preload("Units").Preload("Variants").Preload("Variants.PricingTiers").Preload("Variants.Attributes").First(&loaded, product.ID).Error
+	require.NoError(t, err, "failed to reload test product")
+
+	return &loaded
+}
+
+// CreateTestProductWithUnits creates a product with multiple units (base + non-base).
+// Returns the product with Units, Variants, and PricingTiers loaded.
+func CreateTestProductWithUnits(t *testing.T, db *gorm.DB) *models.Product {
+	t.Helper()
+
+	category := CreateTestCategory(t, db)
+
+	product := &models.Product{
+		Name:         fmt.Sprintf("Test Product %s", uuid.New().String()[:8]),
+		CategoryID:   category.ID,
+		PriceSetting: "fixed",
+		HasVariants:  false,
+		Status:       "active",
+	}
+	require.NoError(t, db.Create(product).Error)
+
+	// Create base unit (Pcs)
+	baseUnit := &models.ProductUnit{
+		ProductID:        product.ID,
+		Name:             "Pcs",
+		ConversionFactor: 1,
+		ToBaseUnit:       1,
+		IsBase:           true,
+	}
+	require.NoError(t, db.Create(baseUnit).Error)
+
+	// Create non-base unit (Dozen = 12 Pcs)
+	dozenUnit := &models.ProductUnit{
+		ProductID:        product.ID,
+		Name:             "Dozen",
+		ConversionFactor: 12,
+		ConvertsToID:     &baseUnit.ID,
+		ToBaseUnit:       12,
+		IsBase:           false,
+	}
+	require.NoError(t, db.Create(dozenUnit).Error)
+
+	// Create variant with stock and tiered pricing
+	variantID := uuid.New().String()
+	variant := &models.ProductVariant{
+		ID:           variantID,
+		ProductID:    product.ID,
+		SKU:          fmt.Sprintf("TST-%s", uuid.New().String()[:6]),
+		CurrentStock: 200,
+	}
+	require.NoError(t, db.Create(variant).Error)
+
+	// Pricing tiers: 1+ pcs = 75000, 12+ pcs = 70000
+	require.NoError(t, db.Create(&models.VariantPricingTier{VariantID: variantID, MinQty: 1, Value: 75000}).Error)
+	require.NoError(t, db.Create(&models.VariantPricingTier{VariantID: variantID, MinQty: 12, Value: 70000}).Error)
+
+	// Reload
+	var loaded models.Product
+	err := db.Preload("Units").Preload("Variants").Preload("Variants.PricingTiers").Preload("Variants.Attributes").First(&loaded, product.ID).Error
+	require.NoError(t, err)
+
+	return &loaded
+}
+
+// NewStockMovement creates an in-memory StockMovement (does NOT save to DB).
+func NewStockMovement(variantID string, movementType string, quantity int, referenceType string, referenceID *uint, notes string) *models.StockMovement {
+	return &models.StockMovement{
+		VariantID:     variantID,
+		MovementType:  movementType,
+		Quantity:      quantity,
+		ReferenceType: referenceType,
+		ReferenceID:   referenceID,
+		Notes:         notes,
+	}
+}
+
 // CreateTestSuperAdmin creates a super admin user with the Super Admin role.
 func CreateTestSuperAdmin(t *testing.T, db *gorm.DB) *models.User {
 	t.Helper()

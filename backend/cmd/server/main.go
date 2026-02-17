@@ -103,6 +103,9 @@ func main() {
 	supplierRepo := repositories.NewSupplierRepository(db)
 	rackRepo := repositories.NewRackRepository(db)
 	productRepo := repositories.NewProductRepository(db)
+	poRepo := repositories.NewPORepository(db)
+	stockMovementRepo := repositories.NewStockMovementRepository(db)
+	salesRepo := repositories.NewSalesRepository(db)
 
 	var imageStorage services.ImageStorage
 	if cfg.MinIOEnabled {
@@ -131,6 +134,9 @@ func main() {
 	supplierService := services.NewSupplierService(supplierRepo)
 	rackService := services.NewRackService(rackRepo)
 	productService := services.NewProductService(productRepo, imageStorage)
+	seqService := services.NewSequenceService(db)
+	poService := services.NewPOService(db, poRepo, stockMovementRepo, seqService)
+	salesService := services.NewSalesService(db, salesRepo, seqService)
 
 	// Initialize middleware
 	authMiddleware := middleware.NewAuthMiddleware(cfg.JWTAccessSecret, rdb, userRepo)
@@ -146,10 +152,12 @@ func main() {
 	supplierHandler := handlers.NewSupplierHandler(supplierService)
 	rackHandler := handlers.NewRackHandler(rackService)
 	productHandler := handlers.NewProductHandler(productService)
+	poHandler := handlers.NewPOHandler(poService)
+	salesHandler := handlers.NewSalesHandler(salesService)
 
 	// Setup router and routes
 	r := chi.NewRouter()
-	routes.Setup(r, healthHandler, authHandler, userHandler, roleHandler, permissionHandler, categoryHandler, supplierHandler, rackHandler, productHandler, authMiddleware, permMiddleware, cfg)
+	routes.Setup(r, healthHandler, authHandler, userHandler, roleHandler, permissionHandler, categoryHandler, supplierHandler, rackHandler, productHandler, poHandler, salesHandler, authMiddleware, permMiddleware, cfg)
 
 	// Start server
 	addr := fmt.Sprintf(":%s", cfg.AppPort)

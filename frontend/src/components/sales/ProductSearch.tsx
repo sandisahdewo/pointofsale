@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useProductStore, Product } from '@/stores/useProductStore';
 import { useSalesStore } from '@/stores/useSalesStore';
+import { useToastStore } from '@/stores/useToastStore';
+import { ApiError } from '@/lib/api';
 import Button from '@/components/ui/Button';
 import SearchResultsDropdown from './SearchResultsDropdown';
 
@@ -12,14 +13,13 @@ interface ProductSearchProps {
 
 export default function ProductSearch({ sessionId }: ProductSearchProps) {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<Product[]>([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [showHint, setShowHint] = useState(false);
 
-  const { products } = useProductStore();
-  const { addToCart } = useSalesStore();
+  const { searchResults, isSearching, searchProducts, addToCart, clearSearch } = useSalesStore();
+  const { addToast } = useToastStore();
 
-  const handleSearch = () => {
+  const handleSearch = async () => {
     if (query.trim().length < 3) {
       setShowHint(true);
       setIsDropdownOpen(false);
@@ -28,27 +28,17 @@ export default function ProductSearch({ sessionId }: ProductSearchProps) {
 
     setShowHint(false);
 
-    const searchQuery = query.trim().toLowerCase();
-
-    // Filter active products and search by name, sku, or barcode
-    const matchingProducts = products
-      .filter((product) => product.status === 'active')
-      .filter((product) => {
-        // Check product name
-        if (product.name.toLowerCase().includes(searchQuery)) {
-          return true;
-        }
-        // Check variant SKU or barcode
-        return product.variants.some(
-          (variant) =>
-            variant.sku.toLowerCase().includes(searchQuery) ||
-            variant.barcode.toLowerCase().includes(searchQuery)
-        );
-      })
-      .slice(0, 10); // Limit to 10 results
-
-    setResults(matchingProducts);
-    setIsDropdownOpen(true);
+    try {
+      await searchProducts(query.trim());
+      setIsDropdownOpen(true);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        addToast(err.message, 'error');
+      } else {
+        addToast('Search failed. Please try again.', 'error');
+      }
+      setIsDropdownOpen(false);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -70,6 +60,7 @@ export default function ProductSearch({ sessionId }: ProductSearchProps) {
 
   const handleCloseDropdown = () => {
     setIsDropdownOpen(false);
+    clearSearch();
   };
 
   return (
@@ -90,14 +81,14 @@ export default function ProductSearch({ sessionId }: ProductSearchProps) {
             </p>
           )}
         </div>
-        <Button onClick={handleSearch} size="md">
-          Search
+        <Button onClick={handleSearch} size="md" disabled={isSearching}>
+          {isSearching ? 'Searching...' : 'Search'}
         </Button>
       </div>
 
       {isDropdownOpen && (
         <SearchResultsDropdown
-          products={results}
+          products={searchResults}
           onSelectVariant={handleSelectVariant}
           onClose={handleCloseDropdown}
         />

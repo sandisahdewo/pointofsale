@@ -22,6 +22,8 @@ func Setup(
 	supplierHandler *handlers.SupplierHandler,
 	rackHandler *handlers.RackHandler,
 	productHandler *handlers.ProductHandler,
+	poHandler *handlers.POHandler,
+	salesHandler *handlers.SalesHandler,
 	authMiddleware *middleware.AuthMiddleware,
 	permMiddleware *middleware.PermissionMiddleware,
 	cfg *config.Config,
@@ -130,6 +132,26 @@ func Setup(
 				r.With(permMiddleware.RequirePermission("Master Data", "Product", "create")).Post("/", productHandler.CreateProduct)
 				r.With(permMiddleware.RequirePermission("Master Data", "Product", "update")).Put("/{id}", productHandler.UpdateProduct)
 				r.With(permMiddleware.RequirePermission("Master Data", "Product", "delete")).Delete("/{id}", productHandler.DeleteProduct)
+			})
+
+			// Transaction - Purchase Orders
+			r.Route("/purchase-orders", func(r chi.Router) {
+				r.With(permMiddleware.RequirePermission("Transaction", "Purchase Order", "read")).Get("/", poHandler.ListPOs)
+				r.With(permMiddleware.RequirePermission("Transaction", "Purchase Order", "read")).Get("/products", poHandler.GetProductsForPO)
+				r.With(permMiddleware.RequirePermission("Transaction", "Purchase Order", "read")).Get("/{id}", poHandler.GetPO)
+				r.With(permMiddleware.RequirePermission("Transaction", "Purchase Order", "create")).Post("/", poHandler.CreatePO)
+				r.With(permMiddleware.RequirePermission("Transaction", "Purchase Order", "update")).Put("/{id}", poHandler.UpdatePO)
+				r.With(permMiddleware.RequirePermission("Transaction", "Purchase Order", "delete")).Delete("/{id}", poHandler.DeletePO)
+				r.With(permMiddleware.RequirePermission("Transaction", "Purchase Order", "update")).Patch("/{id}/status", poHandler.UpdatePOStatus)
+				r.With(permMiddleware.RequirePermission("Transaction", "Purchase Order", "update")).Post("/{id}/receive", poHandler.ReceivePO)
+			})
+
+			// Transaction - Sales
+			r.Route("/sales", func(r chi.Router) {
+				r.With(permMiddleware.RequirePermission("Transaction", "Sale", "read")).Get("/products/search", salesHandler.ProductSearch)
+				r.With(permMiddleware.RequirePermission("Transaction", "Sale", "create")).Post("/checkout", salesHandler.Checkout)
+				r.With(permMiddleware.RequirePermission("Transaction", "Sale", "read")).Get("/transactions", salesHandler.ListTransactions)
+				r.With(permMiddleware.RequirePermission("Transaction", "Sale", "read")).Get("/transactions/{id}", salesHandler.GetTransaction)
 			})
 		})
 	})

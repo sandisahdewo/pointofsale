@@ -2,7 +2,6 @@
 
 import React, { useMemo } from 'react';
 import { useSalesStore } from '@/stores/useSalesStore';
-import { useProductStore } from '@/stores/useProductStore';
 import { formatCurrency } from '@/utils/currency';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
@@ -13,10 +12,10 @@ interface CartProps {
 
 export default function Cart({ sessionId }: CartProps) {
   const sessions = useSalesStore((state) => state.sessions);
+  const productCache = useSalesStore((state) => state.productCache);
   const updateCartItemQuantity = useSalesStore((state) => state.updateCartItemQuantity);
   const updateCartItemUnit = useSalesStore((state) => state.updateCartItemUnit);
   const removeFromCart = useSalesStore((state) => state.removeFromCart);
-  const products = useProductStore((state) => state.products);
 
   const session = sessions.find((s) => s.id === sessionId);
 
@@ -24,13 +23,15 @@ export default function Cart({ sessionId }: CartProps) {
     if (!session) return [];
 
     return session.cart.map((cartItem) => {
-      const product = products.find((p) => p.id === cartItem.productId);
+      const product = productCache[cartItem.productId];
       if (!product) return null;
 
       const variant = product.variants.find((v) => v.id === cartItem.variantId);
       if (!variant) return null;
 
-      const selectedUnit = product.units.find((u) => u.id === cartItem.selectedUnitId);
+      const selectedUnit = product.units.find(
+        (u) => String(u.id) === cartItem.selectedUnitId
+      );
       if (!selectedUnit) return null;
 
       const baseUnit = product.units.find((u) => u.isBase);
@@ -59,6 +60,18 @@ export default function Cart({ sessionId }: CartProps) {
       // Stock validation
       const hasStockError = baseQty > variant.currentStock;
 
+      // Format attributes from array → "Value1, Value2" for display
+      const attributesList = variant.attributes
+        .map((a) => `${a.attributeName}: ${a.attributeValue}`)
+        .join(', ');
+
+      // Get image URL from variant images array (sorted by sortOrder)
+      let imageUrl: string | null = null;
+      if (variant.images.length > 0) {
+        const sorted = [...variant.images].sort((a, b) => a.sortOrder - b.sortOrder);
+        imageUrl = sorted[0].imageUrl;
+      }
+
       return {
         cartItem,
         product,
@@ -71,9 +84,11 @@ export default function Cart({ sessionId }: CartProps) {
         total,
         isTierPricing,
         hasStockError,
+        attributesList,
+        imageUrl,
       };
     }).filter(Boolean);
-  }, [session, products]);
+  }, [session, productCache]);
 
   if (!session) {
     return <div className="text-center text-gray-500 py-8">Session not found</div>;
@@ -113,20 +128,13 @@ export default function Cart({ sessionId }: CartProps) {
               variant,
               selectedUnit,
               baseUnit,
-              baseQty,
               perUnitPrice,
               total,
               isTierPricing,
               hasStockError,
+              attributesList,
+              imageUrl,
             } = item;
-
-            // Get image URL
-            const imageUrl = variant.images.length > 0 ? variant.images[0] : null;
-
-            // Format attributes
-            const attributesList = Object.entries(variant.attributes)
-              .map(([key, value]) => `${key}: ${value}`)
-              .join(', ');
 
             return (
               <React.Fragment key={variant.id}>
@@ -197,7 +205,7 @@ export default function Cart({ sessionId }: CartProps) {
                       className="rounded-md border border-gray-300 px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
                       {product.units.map((unit) => (
-                        <option key={unit.id} value={unit.id}>
+                        <option key={unit.id} value={String(unit.id)}>
                           {unit.name}
                         </option>
                       ))}

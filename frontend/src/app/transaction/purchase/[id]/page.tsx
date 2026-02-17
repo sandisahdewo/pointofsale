@@ -1,14 +1,15 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import AdminLayout from '@/components/layout/AdminLayout';
 import Button from '@/components/ui/Button';
 import StatusBadge from '@/components/ui/StatusBadge';
 import ConfirmModal from '@/components/ui/ConfirmModal';
-import { usePurchaseOrderStore, POStatus } from '@/stores/usePurchaseOrderStore';
+import { usePurchaseOrderStore, POStatus, PurchaseOrder } from '@/stores/usePurchaseOrderStore';
 import { useToastStore } from '@/stores/useToastStore';
+import { ApiError } from '@/lib/api';
 
 const STATUS_COLORS: Record<POStatus, 'green' | 'blue' | 'yellow' | 'amber' | 'gray' | 'red'> = {
   draft: 'gray',
@@ -23,25 +24,40 @@ type ConfirmAction = 'send' | 'complete' | 'cancel' | null;
 export default function PurchaseOrderDetailPage() {
   const router = useRouter();
   const params = useParams();
-  const { getPurchaseOrder, updateStatus, completePurchaseOrder, cancelPurchaseOrder } = usePurchaseOrderStore();
+  const { fetchPurchaseOrder, updateStatusRemote } = usePurchaseOrderStore();
   const { addToast } = useToastStore();
 
-  const po = getPurchaseOrder(Number(params.id));
+  const [po, setPo] = useState<PurchaseOrder | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [expandedProducts, setExpandedProducts] = useState<Set<number>>(new Set());
   const [confirmAction, setConfirmAction] = useState<ConfirmAction>(null);
+  const [isActioning, setIsActioning] = useState(false);
 
-  if (!po) {
-    return (
-      <AdminLayout>
-        <div className="text-center py-12">
-          <p className="text-gray-500">Purchase order not found.</p>
-          <Link href="/transaction/purchase" className="text-blue-600 hover:underline mt-4 inline-block">
-            ← Back to Purchase Orders
-          </Link>
-        </div>
-      </AdminLayout>
-    );
-  }
+  useEffect(() => {
+    const loadPO = async () => {
+      const id = Number(params.id);
+      if (!id) {
+        router.push('/transaction/purchase');
+        return;
+      }
+      try {
+        setIsLoading(true);
+        const loaded = await fetchPurchaseOrder(id);
+        setPo(loaded);
+      } catch (error) {
+        if (error instanceof ApiError) {
+          addToast(error.message, 'error');
+        } else {
+          addToast('Failed to load purchase order', 'error');
+        }
+        router.push('/transaction/purchase');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    void loadPO();
+  }, [params.id, fetchPurchaseOrder, addToast, router]);
 
   const toggleProduct = (productId: number) => {
     setExpandedProducts((prev) => {
@@ -55,22 +71,36 @@ export default function PurchaseOrderDetailPage() {
     });
   };
 
-  const handleMarkAsSent = () => {
-    updateStatus(po.id, 'sent');
-    addToast('Purchase order marked as sent', 'success');
-    setConfirmAction(null);
-  };
+  const handleStatusAction = async (action: ConfirmAction) => {
+    if (!po || !action) return;
 
-  const handleComplete = () => {
-    completePurchaseOrder(po.id);
-    addToast('Purchase order marked as completed', 'success');
-    setConfirmAction(null);
-  };
+    const statusMap: Record<NonNullable<ConfirmAction>, POStatus> = {
+      send: 'sent',
+      complete: 'completed',
+      cancel: 'cancelled',
+    };
 
-  const handleCancel = () => {
-    cancelPurchaseOrder(po.id);
-    addToast('Purchase order has been cancelled', 'success');
-    setConfirmAction(null);
+    const messageMap: Record<NonNullable<ConfirmAction>, string> = {
+      send: 'Purchase order marked as sent',
+      complete: 'Purchase order marked as completed',
+      cancel: 'Purchase order has been cancelled',
+    };
+
+    try {
+      setIsActioning(true);
+      const updated = await updateStatusRemote(po.id, statusMap[action]);
+      setPo(updated);
+      addToast(messageMap[action], 'success');
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to update purchase order status', 'error');
+      }
+    } finally {
+      setIsActioning(false);
+      setConfirmAction(null);
+    }
   };
 
   const formatCurrency = (amount: number) => {
@@ -101,6 +131,27 @@ export default function PurchaseOrderDetailPage() {
     }).format(date);
   };
 
+  if (isLoading) {
+    return (
+      <AdminLayout>
+        <div className="text-center py-12 text-gray-500">Loading purchase order...</div>
+      </AdminLayout>
+    );
+  }
+
+  if (!po) {
+    return (
+      <AdminLayout>
+        <div className="text-center py-12">
+          <p className="text-gray-500">Purchase order not found.</p>
+          <Link href="/transaction/purchase" className="text-blue-600 hover:underline mt-4 inline-block">
+            Back to Purchase Orders
+          </Link>
+        </div>
+      </AdminLayout>
+    );
+  }
+
   // Group items by product
   const itemsByProduct = po.items.reduce((acc, item) => {
     if (!acc[item.productId]) {
@@ -122,7 +173,7 @@ export default function PurchaseOrderDetailPage() {
             href="/transaction/purchase"
             className="text-sm text-gray-600 hover:text-gray-900 flex items-center gap-1"
           >
-            ← Back to Purchase Orders
+            Back to Purchase Orders
           </Link>
         </div>
 
@@ -223,7 +274,7 @@ export default function PurchaseOrderDetailPage() {
                                     )}
                                   </td>
                                   <td className="px-4 py-2 text-sm text-gray-600">
-                                    {formatCurrency(item.receivedPrice || item.price)}
+                                    {formatCurrency(item.receivedPrice ?? item.price)}
                                   </td>
                                 </>
                               ) : null}
@@ -318,28 +369,28 @@ export default function PurchaseOrderDetailPage() {
       <ConfirmModal
         isOpen={confirmAction === 'send'}
         onClose={() => setConfirmAction(null)}
-        onConfirm={handleMarkAsSent}
+        onConfirm={() => void handleStatusAction('send')}
         title="Send Purchase Order"
         message="Mark this PO as sent to the supplier?"
-        confirmLabel="Send"
+        confirmLabel={isActioning ? 'Sending...' : 'Send'}
       />
 
       <ConfirmModal
         isOpen={confirmAction === 'complete'}
         onClose={() => setConfirmAction(null)}
-        onConfirm={handleComplete}
+        onConfirm={() => void handleStatusAction('complete')}
         title="Complete Purchase Order"
         message="Mark this PO as completed? This action cannot be undone."
-        confirmLabel="Complete"
+        confirmLabel={isActioning ? 'Completing...' : 'Complete'}
       />
 
       <ConfirmModal
         isOpen={confirmAction === 'cancel'}
         onClose={() => setConfirmAction(null)}
-        onConfirm={handleCancel}
+        onConfirm={() => void handleStatusAction('cancel')}
         title="Cancel Purchase Order"
         message={`Are you sure you want to cancel ${po.poNumber}? This action cannot be undone.`}
-        confirmLabel="Cancel Order"
+        confirmLabel={isActioning ? 'Cancelling...' : 'Cancel Order'}
         variant="danger"
       />
     </AdminLayout>

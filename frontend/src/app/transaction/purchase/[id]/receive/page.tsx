@@ -7,7 +7,12 @@ import Button from '@/components/ui/Button';
 import Select from '@/components/ui/Select';
 import DatePicker from '@/components/ui/DatePicker';
 import Checkbox from '@/components/ui/Checkbox';
-import { usePurchaseOrderStore, PaymentMethod, PurchaseOrder } from '@/stores/usePurchaseOrderStore';
+import AdminLayout from '@/components/layout/AdminLayout';
+import {
+  usePurchaseOrderStore,
+  PaymentMethod,
+  PurchaseOrder,
+} from '@/stores/usePurchaseOrderStore';
 import { useSupplierStore } from '@/stores/useSupplierStore';
 import { useToastStore } from '@/stores/useToastStore';
 import { ApiError } from '@/lib/api';
@@ -49,11 +54,13 @@ function buildInitialItemsData(po?: PurchaseOrder): Record<string, ItemReceiveDa
 export default function ReceivePurchaseOrderPage() {
   const router = useRouter();
   const params = useParams();
-  const { getPurchaseOrder, receivePurchaseOrder } = usePurchaseOrderStore();
+  const { fetchPurchaseOrder, receivePurchaseOrderRemote } = usePurchaseOrderStore();
   const { suppliers, fetchAllSuppliers } = useSupplierStore();
   const { addToast } = useToastStore();
 
-  const po = getPurchaseOrder(Number(params.id));
+  const [po, setPo] = useState<PurchaseOrder | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [receivedDate, setReceivedDate] = useState(() => {
     const now = new Date();
@@ -61,43 +68,44 @@ export default function ReceivePurchaseOrderPage() {
   });
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
   const [bankAccountId, setBankAccountId] = useState('');
-  const [itemsData, setItemsData] = useState<Record<string, ItemReceiveData>>(() => buildInitialItemsData(po));
+  const [itemsData, setItemsData] = useState<Record<string, ItemReceiveData>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [dontShowAgain, setDontShowAgain] = useState(() => getWarningDismissedPreference());
   const [showWarning, setShowWarning] = useState(() => !getWarningDismissedPreference());
 
   useEffect(() => {
-    const loadSuppliers = async () => {
+    const loadData = async () => {
+      const id = Number(params.id);
+      if (!id) {
+        router.push('/transaction/purchase');
+        return;
+      }
       try {
-        await fetchAllSuppliers();
+        setIsLoading(true);
+        const [loaded] = await Promise.all([
+          fetchPurchaseOrder(id),
+          fetchAllSuppliers(),
+        ]);
+        if (loaded.status !== 'sent') {
+          router.push(`/transaction/purchase/${id}`);
+          return;
+        }
+        setPo(loaded);
+        setItemsData(buildInitialItemsData(loaded));
       } catch (error) {
         if (error instanceof ApiError) {
           addToast(error.message, 'error');
         } else {
-          addToast('Failed to load suppliers', 'error');
+          addToast('Failed to load purchase order', 'error');
         }
+        router.push('/transaction/purchase');
+      } finally {
+        setIsLoading(false);
       }
     };
 
-    void loadSuppliers();
-  }, [fetchAllSuppliers, addToast]);
-
-  useEffect(() => {
-    if (!po) {
-      router.push('/transaction/purchase');
-      return;
-    }
-
-    if (po.status !== 'sent') {
-      router.push(`/transaction/purchase/${params.id}`);
-    }
-  }, [po, router, params.id]);
-
-  if (!po || po.status !== 'sent') {
-    return null;
-  }
-
-  const supplier = suppliers.find((s) => s.id === po.supplierId);
+    void loadData();
+  }, [params.id, fetchPurchaseOrder, fetchAllSuppliers, addToast, router]);
 
   const handleQtyChange = (itemId: string, qty: number) => {
     setItemsData((prev) => {
@@ -178,27 +186,53 @@ export default function ReceivePurchaseOrderPage() {
     return Object.keys(newErrors).length === 0;
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    if (!po) return;
     if (!validate()) {
       addToast('Please fix the errors before saving', 'error');
       return;
     }
 
-    receivePurchaseOrder(po.id, {
-      receivedDate,
-      paymentMethod,
-      supplierBankAccountId: paymentMethod !== 'cash' ? bankAccountId : undefined,
-      items: Object.values(itemsData).map((item) => ({
-        id: item.id,
-        receivedQty: item.receivedQty,
-        receivedPrice: item.receivedPrice,
-        isVerified: item.isVerified,
-      })),
-    });
+    try {
+      setIsSubmitting(true);
+      await receivePurchaseOrderRemote(po.id, {
+        receivedDate,
+        paymentMethod,
+        supplierBankAccountId: paymentMethod !== 'cash' ? bankAccountId : undefined,
+        items: Object.values(itemsData).map((item) => ({
+          id: item.id,
+          receivedQty: item.receivedQty,
+          receivedPrice: item.receivedPrice,
+          isVerified: item.isVerified,
+        })),
+      });
 
-    addToast('Purchase order received successfully. Stock has been updated.', 'success');
-    router.push(`/transaction/purchase/${po.id}`);
+      addToast('Purchase order received successfully. Stock has been updated.', 'success');
+      router.push(`/transaction/purchase/${po.id}`);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        addToast(error.message, 'error');
+      } else {
+        addToast('Failed to receive purchase order', 'error');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
+
+  if (isLoading) {
+    return (
+      <AdminLayout>
+        <div className="text-center py-12 text-gray-500">Loading purchase order...</div>
+      </AdminLayout>
+    );
+  }
+
+  if (!po || po.status !== 'sent') {
+    return null;
+  }
+
+  const supplier = suppliers.find((s) => s.id === po.supplierId);
 
   // Calculate summary
   const summary = {
@@ -240,9 +274,11 @@ export default function ReceivePurchaseOrderPage() {
             href={`/transaction/purchase/${po.id}`}
             className="text-sm text-gray-600 hover:text-gray-900 flex items-center gap-1"
           >
-            ← Back to {po.poNumber}
+            Back to {po.poNumber}
           </Link>
-          <Button onClick={handleSave}>Save Receive</Button>
+          <Button onClick={() => void handleSave()} disabled={isSubmitting}>
+            {isSubmitting ? 'Saving...' : 'Save Receive'}
+          </Button>
         </div>
       </div>
 
@@ -304,7 +340,7 @@ export default function ReceivePurchaseOrderPage() {
         {showWarning && allItemsMatch && (
           <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
             <div className="flex items-start gap-3">
-              <span className="text-amber-600 text-xl">⚠️</span>
+              <span className="text-amber-600 text-xl">!</span>
               <div className="flex-1">
                 <p className="text-sm text-amber-800 mb-2">
                   Received quantity matches ordered quantity.
@@ -321,7 +357,7 @@ export default function ReceivePurchaseOrderPage() {
                 onClick={handleDismissWarning}
                 className="text-amber-600 hover:text-amber-800"
               >
-                ✕
+                x
               </button>
             </div>
           </div>
@@ -420,7 +456,7 @@ export default function ReceivePurchaseOrderPage() {
                                   OK
                                 </label>
                               ) : (
-                                <span className="text-sm text-amber-600">⚠ Mismatch</span>
+                                <span className="text-sm text-amber-600">Mismatch</span>
                               )}
                             </td>
                           </tr>

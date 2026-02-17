@@ -2,6 +2,8 @@ package seeds
 
 import (
 	"log/slog"
+	"strings"
+	"time"
 
 	"github.com/lib/pq"
 	"github.com/pointofsale/backend/models"
@@ -56,6 +58,11 @@ func Run(db *gorm.DB) error {
 
 	// 9. Seed Products
 	if err := seedProducts(db); err != nil {
+		return err
+	}
+
+	// 10. Seed Purchase Orders
+	if err := seedPurchaseOrders(db); err != nil {
 		return err
 	}
 
@@ -632,6 +639,8 @@ func seedProducts(db *gorm.DB) error {
 		},
 	}
 
+	// Stock values reflect what will be set after PO seeding (received POs add stock).
+	// These are the "initial" stock before PO receive.
 	stockBySKU := map[string]int{
 		"TS-R-S": 50,
 		"TS-B-M": 25,
@@ -668,3 +677,167 @@ func seedProducts(db *gorm.DB) error {
 
 	return nil
 }
+
+func seedPurchaseOrders(db *gorm.DB) error {
+	if !db.Migrator().HasTable("purchase_orders") {
+		return nil
+	}
+
+	// Check if POs already exist
+	var count int64
+	if err := db.Model(&models.PurchaseOrder{}).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		slog.Info("purchase orders already exist, skipping seed")
+		return nil
+	}
+
+	// Look up suppliers
+	supplierByName := make(map[string]*models.Supplier)
+	var allSuppliers []models.Supplier
+	if err := db.Preload("BankAccounts").Find(&allSuppliers).Error; err != nil {
+		return err
+	}
+	for i := range allSuppliers {
+		supplierByName[allSuppliers[i].Name] = &allSuppliers[i]
+	}
+
+	// Look up products with variants and units
+	productByName := make(map[string]*models.Product)
+	var allProducts []models.Product
+	if err := db.Preload("Units").Preload("Variants").Preload("Variants.Attributes").Find(&allProducts).Error; err != nil {
+		return err
+	}
+	for i := range allProducts {
+		productByName[allProducts[i].Name] = &allProducts[i]
+	}
+
+	findVariant := func(product *models.Product, sku string) *models.ProductVariant {
+		for i := range product.Variants {
+			if product.Variants[i].SKU == sku {
+				return &product.Variants[i]
+			}
+		}
+		return nil
+	}
+
+	findBaseUnit := func(product *models.Product) *models.ProductUnit {
+		for i := range product.Units {
+			if product.Units[i].IsBase {
+				return &product.Units[i]
+			}
+		}
+		return nil
+	}
+
+	buildLabel := func(v *models.ProductVariant) string {
+		if len(v.Attributes) == 0 {
+			return "Default"
+		}
+		labels := make([]string, len(v.Attributes))
+		for i, attr := range v.Attributes {
+			labels[i] = attr.AttributeValue
+		}
+		return strings.Join(labels, " / ")
+	}
+
+	tshirt := productByName["T-Shirt"]
+	notebook := productByName["Notebook"]
+	rice := productByName["Rice"]
+
+	tshirtBaseUnit := findBaseUnit(tshirt)
+	notebookBaseUnit := findBaseUnit(notebook)
+	riceBaseUnit := findBaseUnit(rice)
+
+	tsRS := findVariant(tshirt, "TS-R-S")
+	tsBM := findVariant(tshirt, "TS-B-M")
+	nbVariant := findVariant(notebook, "NB-001")
+	rcVariant := findVariant(rice, "RC-001")
+
+	smSupplier := supplierByName["PT Sumber Makmur"]
+	jaSupplier := supplierByName["CV Jaya Abadi"]
+	bsSupplier := supplierByName["UD Berkah Sentosa"]
+
+	bankTransfer := "bank_transfer"
+	cash := "cash"
+
+	po1Subtotal := float64(50*45000 + 50*45000 + 100*20000)
+	po1TotalItems := 200
+	po1ReceivedDate := time.Date(2026, 2, 6, 14, 30, 0, 0, time.UTC)
+	smBankID := ""
+	if len(smSupplier.BankAccounts) > 0 {
+		smBankID = smSupplier.BankAccounts[0].ID
+	}
+
+	po1 := models.PurchaseOrder{
+		PONumber: "PO-2026-0001", SupplierID: smSupplier.ID, Date: "2026-02-05",
+		Status: "completed", Notes: "First restocking order",
+		ReceivedDate: &po1ReceivedDate, PaymentMethod: &bankTransfer,
+		SupplierBankAccountID: &smBankID, Subtotal: &po1Subtotal, TotalItems: &po1TotalItems,
+		Items: []models.PurchaseOrderItem{
+			{ProductID: tshirt.ID, VariantID: tsRS.ID, UnitID: tshirtBaseUnit.ID, UnitName: tshirtBaseUnit.Name, ProductName: tshirt.Name, VariantLabel: buildLabel(tsRS), SKU: tsRS.SKU, CurrentStock: 0, OrderedQty: 50, ReceivedQty: intPtr(50), ReceivedPrice: floatPtr(45000), IsVerified: true},
+			{ProductID: tshirt.ID, VariantID: tsBM.ID, UnitID: tshirtBaseUnit.ID, UnitName: tshirtBaseUnit.Name, ProductName: tshirt.Name, VariantLabel: buildLabel(tsBM), SKU: tsBM.SKU, CurrentStock: 0, OrderedQty: 50, ReceivedQty: intPtr(50), ReceivedPrice: floatPtr(45000), IsVerified: true},
+			{ProductID: notebook.ID, VariantID: nbVariant.ID, UnitID: notebookBaseUnit.ID, UnitName: notebookBaseUnit.Name, ProductName: notebook.Name, VariantLabel: buildLabel(nbVariant), SKU: nbVariant.SKU, CurrentStock: 0, OrderedQty: 100, ReceivedQty: intPtr(100), ReceivedPrice: floatPtr(20000), IsVerified: true},
+		},
+	}
+
+	po2Subtotal := float64(50 * 20000)
+	po2TotalItems := 50
+	po2ReceivedDate := time.Date(2026, 2, 9, 10, 0, 0, 0, time.UTC)
+
+	po2 := models.PurchaseOrder{
+		PONumber: "PO-2026-0002", SupplierID: jaSupplier.ID, Date: "2026-02-08",
+		Status: "received", Notes: "Urgent notebook restock",
+		ReceivedDate: &po2ReceivedDate, PaymentMethod: &cash,
+		Subtotal: &po2Subtotal, TotalItems: &po2TotalItems,
+		Items: []models.PurchaseOrderItem{
+			{ProductID: notebook.ID, VariantID: nbVariant.ID, UnitID: notebookBaseUnit.ID, UnitName: notebookBaseUnit.Name, ProductName: notebook.Name, VariantLabel: buildLabel(nbVariant), SKU: nbVariant.SKU, CurrentStock: 100, OrderedQty: 50, ReceivedQty: intPtr(50), ReceivedPrice: floatPtr(20000), IsVerified: true},
+		},
+	}
+
+	po3 := models.PurchaseOrder{
+		PONumber: "PO-2026-0003", SupplierID: bsSupplier.ID, Date: "2026-02-10",
+		Status: "sent", Notes: "Monthly rice order",
+		Items: []models.PurchaseOrderItem{
+			{ProductID: rice.ID, VariantID: rcVariant.ID, UnitID: riceBaseUnit.ID, UnitName: riceBaseUnit.Name, ProductName: rice.Name, VariantLabel: buildLabel(rcVariant), SKU: rcVariant.SKU, CurrentStock: 200, OrderedQty: 100},
+		},
+	}
+
+	po4 := models.PurchaseOrder{
+		PONumber: "PO-2026-0004", SupplierID: smSupplier.ID, Date: "2026-02-12",
+		Status: "draft", Notes: "Pending review",
+		Items: []models.PurchaseOrderItem{
+			{ProductID: tshirt.ID, VariantID: tsRS.ID, UnitID: tshirtBaseUnit.ID, UnitName: tshirtBaseUnit.Name, ProductName: tshirt.Name, VariantLabel: buildLabel(tsRS), SKU: tsRS.SKU, CurrentStock: 50, OrderedQty: 25},
+			{ProductID: tshirt.ID, VariantID: tsBM.ID, UnitID: tshirtBaseUnit.ID, UnitName: tshirtBaseUnit.Name, ProductName: tshirt.Name, VariantLabel: buildLabel(tsBM), SKU: tsBM.SKU, CurrentStock: 25, OrderedQty: 25},
+		},
+	}
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		for _, po := range []*models.PurchaseOrder{&po1, &po2, &po3, &po4} {
+			if err := tx.Create(po).Error; err != nil {
+				return err
+			}
+			slog.Info("created purchase order", "poNumber", po.PONumber, "status", po.Status)
+		}
+
+		movements := []models.StockMovement{
+			{VariantID: tsRS.ID, MovementType: "purchase_receive", Quantity: 50, ReferenceType: "purchase_order", ReferenceID: &po1.ID, Notes: "PO-2026-0001 receive"},
+			{VariantID: tsBM.ID, MovementType: "purchase_receive", Quantity: 50, ReferenceType: "purchase_order", ReferenceID: &po1.ID, Notes: "PO-2026-0001 receive"},
+			{VariantID: nbVariant.ID, MovementType: "purchase_receive", Quantity: 100, ReferenceType: "purchase_order", ReferenceID: &po1.ID, Notes: "PO-2026-0001 receive"},
+			{VariantID: nbVariant.ID, MovementType: "purchase_receive", Quantity: 50, ReferenceType: "purchase_order", ReferenceID: &po2.ID, Notes: "PO-2026-0002 receive"},
+		}
+
+		for _, m := range movements {
+			if err := tx.Create(&m).Error; err != nil {
+				return err
+			}
+		}
+		slog.Info("created stock movements for received POs")
+
+		return nil
+	})
+}
+
+func intPtr(v int) *int          { return &v }
+func floatPtr(v float64) *float64 { return &v }
