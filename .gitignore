@@ -39,6 +39,10 @@ next-env.d.ts
 # Go
 backend/tmp/
 backend/vendor/
+backend/server
+
+# E2E
+e2e/test-results/
 
 # IDE
 .vscode/

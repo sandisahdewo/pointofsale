@@ -87,6 +87,21 @@ services:
     networks:
       - pos-network
 
+  e2e:
+    build:
+      context: ./e2e
+      dockerfile: Dockerfile
+    environment:
+      - BASE_URL=http://frontend:3000
+      - CI=true
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - pos-network
+    profiles:
+      - test
+
 volumes:
   postgres_data:
   redis_data:
