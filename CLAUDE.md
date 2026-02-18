@@ -35,6 +35,9 @@ cd frontend && npm run dev            # frontend dev server
 cd backend && go test ./...           # backend tests (needs test DB)
 ```
 
+## E2E Testing
+**IMPORTANT**: When creating, editing, or fixing e2e tests, you MUST use the `/e2e-test` skill (`.claude/skills/e2e-test.md`) before writing any test code. This skill contains required patterns, debugging workflows, and conventions that ensure tests pass on the first few attempts.
+
 ## Running E2E Tests
 ```bash
 # Via Docker (recommended — includes browser)

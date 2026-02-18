@@ -24,7 +24,7 @@ export default function UserFormModal({
   user,
   onSave,
 }: UserFormModalProps) {
-  const { roles } = useRoleStore();
+  const { roles, fetchAllRoles } = useRoleStore();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -40,11 +40,17 @@ export default function UserFormModal({
 
   useEffect(() => {
     if (isOpen) {
+      fetchAllRoles();
+    }
+  }, [isOpen, fetchAllRoles]);
+
+  useEffect(() => {
+    if (isOpen) {
       if (user) {
         setName(user.name);
         setEmail(user.email);
-        setPhone(user.phone);
-        setAddress(user.address);
+        setPhone(user.phone || '');
+        setAddress(user.address || '');
         setProfilePicture(user.profilePicture ? [user.profilePicture] : []);
         setSelectedRoles((user.roles || []).map((r) => String(r.id)));
         setStatus(user.status === 'pending' ? 'active' : (user.status as 'active' | 'inactive'));

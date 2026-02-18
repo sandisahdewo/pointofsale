@@ -1,126 +1,118 @@
 # Skill: E2E Test
 
-Creates, edits, and fixes Playwright end-to-end tests. Always discovers the live UI with agent-browser before writing any test code.
+Creates, edits, and fixes Playwright end-to-end tests for the Point of Sale admin panel.
 
 ## When to Use
 - Creating new e2e tests for a page or feature
 - Fixing failing e2e tests
 - Editing or modifying existing e2e tests
 
-## MANDATORY: Use agent-browser First
-
-**Before writing, editing, or fixing ANY test code, you MUST browse the live page with `agent-browser`.** No exceptions.
-
-- **Creating** → browse every flow (page load, add, edit, delete, search, sort, pagination)
-- **Editing** → browse to verify the current UI matches what the test expects
-- **Fixing** → reproduce the failing interaction to see actual vs expected state
-
-**Do NOT read page source code** (page.tsx, components, stores, API handlers). All element names, labels, text, roles, and behavior MUST come from agent-browser interaction with the live running application.
-
----
-
-## Discovery Checklist
-
-Use the **agent-browser skill** for all browser interactions. Refer to its documentation for commands (open, snapshot, fill, click, wait, state save/load, close, etc.).
-
-### Login & Navigate
-1. Open `http://localhost:3000/login`, snapshot, fill credentials, click login, wait for dashboard
-2. Save auth state for reuse across discovery sessions
-3. Navigate to the target page route, wait for network idle
-
-### What to Discover
-
-For each page, snapshot and note down:
-
-- [ ] **Page load**: heading text, button labels, search placeholder, table column headers
-- [ ] **Add/Create flow**: click Add button → modal title or page heading, form field labels/placeholders, submit button text → submit empty → validation behavior → fill valid data → submit → toast message
-- [ ] **Edit flow**: click Edit on a row → modal title, pre-filled values, submit button text → modify → submit → toast message
-- [ ] **Delete flow**: click Delete → confirmation modal text, button labels → confirm → toast message
-- [ ] **Search**: placeholder text, debounce behavior, empty state text, reset behavior
-- [ ] **Sorting**: which columns are sortable, sort indicator behavior (active/inactive states)
-- [ ] **Pagination**: "Showing X-Y of Z items" text, page size selector label and options
-- [ ] **Special elements**: active/status toggles, dynamic rows (bank accounts), tabs, status badges
-
-Tips:
-- Use snapshot with `-C` flag to capture clickable divs (table rows, sort headers, tabs)
-- Watch for toasts — snapshot immediately after triggering actions
-- For multi-page features, browse each route separately (`/add`, `/edit/[id]`)
-- Always close the browser when done
-
 ---
 
 ## Workflow: Creating Tests
 
-### Step 1: Prerequisites
-1. **Browse the page** with agent-browser (see Discovery Checklist above)
-2. **Read existing helpers** in `e2e/helpers/` for reusable utilities
-3. **Read existing tests** in the same feature folder for patterns and shared setup
+### Step 1: Read the source code
 
-### Step 2: Create Test File
+**Read the page and component source code first.** This is the fastest and most accurate way to discover every element name, label, toast message, and behavior you need to test.
+
+Read these files for the target page:
+1. **Page file** (`src/app/{feature}/page.tsx`) — column definitions, button labels, modal titles, toast messages, search placeholder, action handlers
+2. **Form/Modal component** (`src/components/{entity}/...`) — field labels, placeholders, required attributes, validation logic, submit handler
+3. **Store** (`src/stores/use{Entity}Store.ts`) — API call signatures, data types, field names
+
+From these files, extract:
+- Heading text, button labels (Create, Save, Update, Delete, Cancel)
+- Modal titles (e.g., `isEdit ? 'Edit User' : 'Create User'`)
+- Form field labels and which are required
+- Toast messages (exact strings from `addToast(...)` calls)
+- Table column headers (from `columns` array)
+- Search placeholder text
+- Validation logic (what triggers errors)
+- Error handling (silent `try/catch` that might swallow errors)
+
+### Step 2: Read existing patterns
+
+1. Read existing helpers in `e2e/helpers/`
+2. Read 1-2 existing tests in the same feature area for patterns
+
+### Optional: Use agent-browser for verification
+
+Use **agent-browser** only when you need to verify runtime behavior that isn't obvious from source code:
+- Dynamic content that depends on database state
+- CSS-based selectors (sort indicator colors, status badges)
+- Complex multi-step flows where you're unsure of the intermediate states
+- Debugging a failing test to see what the page actually shows
+
+### Step 3: Write the test file
 
 File path: `e2e/tests/{feature}/{page}.spec.ts`
 
-Examples: `tests/master/category.spec.ts`, `tests/auth/login.spec.ts`, `tests/transaction/purchase-order.spec.ts`
-
-### Step 3: Write Tests
-
-Use the structure and patterns from the reference sections below. Write tests in this order:
-
+Write tests in this order:
 1. Page load & display (heading, buttons, table headers)
-2. Data display (rows exist in table)
+2. Data display (rows exist)
 3. Pagination info
 4. Search (filter, empty state, reset)
 5. Create (open modal, validation, successful create, cancel)
 6. Edit (prefill check, update, validation)
-7. Delete (confirmation modal, cancel, confirm delete)
-8. Sorting (column click cycles: asc → desc → none)
-9. Page size (change items per page)
-10. Feature-specific (toggles, dynamic rows, tabs, status badges)
+7. Delete (confirmation, cancel, confirm)
+8. Sorting
+9. Page size
+10. Feature-specific (toggles, status badges, approval flows)
+
+### Step 4: Run and fix
+
+```bash
+cd e2e && npx playwright test tests/{feature}/{page}.spec.ts --reporter=list
+```
+
+**Max 3 fix-run iterations.** If still failing after 3 rounds, switch to the debugging workflow below.
 
 ---
 
-## Workflow: Fixing Failing Tests
+## Workflow: Fixing Failing Tests (Fast Path)
 
-### Step 1: Run the Failing Test
+### Step 1: Read error + screenshot + error context
+
 ```bash
-cd e2e && npx playwright test tests/{feature}/{page}.spec.ts
-# Or single test by name:
-cd e2e && npx playwright test -g "test name"
+cd e2e && npx playwright test -g "test name" --reporter=list
 ```
 
-Read the error output carefully. Note the error type:
-- **Timeout / Element not found** — selector doesn't match the live UI
-- **Strict mode violation** — selector matches multiple elements
-- **Assertion failure** — expected vs actual mismatch
-- **Navigation error** — page didn't reach expected URL
+Read the error output, screenshot, AND `error-context.md` in test-results.
 
-### Step 2: Read the Failing Test File
-Understand what the test is trying to do and which selectors/assertions it uses.
+### Step 2: Classify the failure and act
 
-### Step 3: Browse with agent-browser
-Use the **agent-browser skill** to navigate to the same page and reproduce the failing interaction. Snapshot to compare actual element text/roles against what the test expects.
+| Failure Type | Signal | Fix |
+|---|---|---|
+| **Element not found / timeout** | `waiting for getByRole(...)` | Selector mismatch → browse with agent-browser to check actual labels |
+| **Strict mode violation** | `resolved to N elements` | Add `{ exact: true }`, `.first()`, or scope to row (see patterns) |
+| **Click works but nothing happens** | Modal stays open, no toast, no API call | **This is a JS error, NOT a click problem** → read component source code (see Step 3) |
+| **Assertion mismatch** | `expected X, received Y` | Check actual value from screenshot/context |
+| **Toast not visible** | `waiting for getByText(...)` after API action | Increase timeout, or check if API is failing |
+| **Race condition** | Flaky pass/fail | Add `waitForResponse` or explicit waits |
 
-### Step 4: Identify Root Cause
+### Step 3: When form submit doesn't trigger (CRITICAL)
 
-| Error Type | What to Check |
-|---|---|
-| Element not found | Snapshot — did the label/text/role change? |
-| Timeout | Is the element behind a loading state? Is timeout too low? |
-| Strict mode violation | Count matching elements — add `exact: true` or narrow scope |
-| Wrong text/value | Get text of the element to see actual content |
-| Navigation error | Check if a modal blocked navigation, or URL changed |
-| Toast not visible | Snapshot immediately after triggering action |
+If clicking a submit button works (element found, click succeeds) but the form doesn't submit (no toast, no API call, modal stays open):
 
-### Step 5: Fix, Then Verify
-Apply the fix, then re-run the test:
-```bash
-cd e2e && npx playwright test tests/{feature}/{page}.spec.ts
-```
+**DO NOT** try different click methods (JS click, dispatchEvent, keyboard Enter, viewport resize). The click works fine.
 
-If still failing, go back to Step 3 and re-inspect with agent-browser.
+**DO THIS instead:**
+1. **Read the component source code** (the form component, not the page)
+2. Look for `try/catch` blocks that silently swallow errors
+3. Check if any `.trim()`, `.map()`, or property access runs on potentially `null/undefined` values
+4. Check browser console for React warnings ("controlled to uncontrolled" = null state from API)
+5. The fix is almost always in the **frontend code**, not the test
 
-### Step 6: Close
-Close the browser session when done.
+Common root causes:
+- API returns `null` for optional fields → component does `setPhone(user.phone)` → state is `null` → `null.trim()` throws in submit handler
+- Silent `catch(error) {}` blocks that swallow TypeErrors
+- Fix: `setField(value || '')` in the component's useEffect
+
+### Step 4: Max iterations
+
+- **3 fix-run cycles max** per failure
+- If still stuck: read the component source code, check browser console, inspect API responses
+- Never try 5+ variations of the same approach (click methods, viewport sizes, scroll strategies)
 
 ---
 
@@ -161,189 +153,202 @@ test.describe('Page Name', () => {
 
 ## Patterns Reference
 
-All patterns below are extracted from the real test files. Use these as the authoritative reference.
-
 ### Unique Test Data
-Use `Date.now()` to generate unique names so tests don't collide:
 ```typescript
 const categoryName = `Test Category ${Date.now()}`;
-const rackCode = `TR-${Date.now()}`;
+const userEmail = `testuser${Date.now()}@example.com`;
 ```
 
 ### HTML5 Native Validation
-Check browser-native required field validation (not custom error messages):
 ```typescript
-await page.getByRole('button', { name: 'Create' }).click();
+await page.getByRole('button', { name: 'Save' }).click();
 const nameInput = page.getByLabel('Name');
 expect(await nameInput.evaluate((el: HTMLInputElement) => el.validity.valueMissing)).toBe(true);
 ```
 
-Verify validation clears after filling:
-```typescript
-await nameInput.fill('Test');
-expect(await nameInput.evaluate((el: HTMLInputElement) => el.validity.valid)).toBe(true);
-```
-
-For textareas (e.g., Address):
-```typescript
-const addressTextarea = page.getByPlaceholder('Supplier address');
-expect(await addressTextarea.evaluate((el: HTMLTextAreaElement) => el.validity.valueMissing)).toBe(true);
-```
-
 ### Custom Validation Errors (Auth Pages)
-Auth pages use custom error messages, not native validation:
 ```typescript
 await page.getByRole('button', { name: 'Login' }).click();
 await expect(page.getByText('Email is required')).toBeVisible();
-await expect(page.getByText('Password is required')).toBeVisible();
-```
-
-### Browser Email Validation
-```typescript
-await emailInput.fill('not-an-email');
-await page.getByRole('button', { name: 'Login' }).click();
-await expect(emailInput).toHaveJSProperty('validity.typeMismatch', true);
 ```
 
 ### Create-Search-Act Flow
-For edit/delete tests, create fresh data first, search for it, then act. This avoids depending on pre-existing data:
+For edit/delete, create fresh data first to avoid depending on pre-existing state:
 ```typescript
 test('should update an entity', async ({ page }) => {
+  test.slow(); // multi-step tests need extra time
+
   // 1. Create
   const name = `Edit Me ${Date.now()}`;
-  await page.getByRole('button', { name: 'Add Entity' }).click();
-  await page.getByLabel('Name').fill(name);
   await page.getByRole('button', { name: 'Create' }).click();
-  await expect(page.getByText('Entity created successfully')).toBeVisible({ timeout: 10000 });
+  await page.getByLabel('Name').fill(name);
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('created successfully')).toBeVisible({ timeout: 10000 });
 
   // 2. Search
-  await page.getByPlaceholder('Search entities...').fill(name);
+  await page.getByPlaceholder('Search...').fill(name);
   await expect(page.getByRole('cell', { name })).toBeVisible({ timeout: 5000 });
 
-  // 3. Act (edit)
+  // 3. Act
   await page.getByRole('button', { name: 'Edit' }).click();
   await page.getByLabel('Name').fill(`${name} Updated`);
-  await page.getByRole('button', { name: 'Update' }).click();
-  await expect(page.getByText('Entity updated successfully')).toBeVisible({ timeout: 10000 });
+  await page.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('updated successfully')).toBeVisible({ timeout: 10000 });
+});
+```
+
+### Self-Contained State Tests
+When testing features that require specific state (e.g., pending users), create that state within the test:
+```typescript
+test('should approve a pending user', async ({ page }) => {
+  test.slow();
+
+  // Create prerequisite state: register a new user
+  await page.goto('/register');
+  const userName = `Approve Me ${Date.now()}`;
+  await page.getByLabel('Name').fill(userName);
+  await page.getByLabel('Email').fill(`approve${Date.now()}@example.com`);
+  await page.getByLabel('Password', { exact: true }).fill('Test@12345');
+  await page.getByLabel('Confirm Password').fill('Test@12345');
+  await page.getByRole('button', { name: 'Register' }).click();
+  await expect(page.getByText(/registration successful/i)).toBeVisible({ timeout: 10000 });
+
+  // Re-login as admin and act
+  await login(page, 'admin@pointofsale.com', 'Admin@12345');
+  await page.goto('/settings/users');
+  await page.getByPlaceholder('Search users...').fill(userName);
+  await expect(page.getByRole('cell', { name: userName })).toBeVisible({ timeout: 5000 });
+
+  const row = page.getByRole('row').filter({ hasText: userName });
+  await row.getByRole('button', { name: 'Approve' }).click();
+  await expect(page.getByText(/has been approved/)).toBeVisible({ timeout: 10000 });
 });
 ```
 
 ### Delete Confirmation
-The delete confirmation modal shows the entity name in bold. Use `.nth(1)` for the modal's Delete button since the row's Delete button is `.nth(0)`:
+Use `.nth(1)` for the modal's Delete button (row's Delete is `.nth(0)`):
 ```typescript
 await page.getByRole('button', { name: 'Delete' }).click();
 await expect(page.getByText(/Are you sure you want to delete/)).toBeVisible();
-await expect(page.locator('strong', { hasText: entityName })).toBeVisible();
-
-// Confirm delete (second Delete button = modal's)
 await page.getByRole('button', { name: 'Delete' }).nth(1).click();
-await expect(page.getByText('Entity deleted successfully')).toBeVisible({ timeout: 10000 });
+await expect(page.getByText(/deleted successfully/)).toBeVisible({ timeout: 10000 });
 ```
 
 ### Search with Debounce
-Search has a ~300ms debounce. Use `{ timeout: 5000 }`:
 ```typescript
-await page.getByPlaceholder('Search entities...').fill('search term');
-await expect(page.getByRole('cell', { name: 'Expected Match' })).toBeVisible({ timeout: 5000 });
-```
+// Filter
+await page.getByPlaceholder('Search...').fill('term');
+await expect(page.getByRole('cell', { name: 'Match' })).toBeVisible({ timeout: 5000 });
 
-Empty state:
-```typescript
-await page.getByPlaceholder('Search entities...').fill('zzz_nonexistent_xyz');
+// Empty state
+await page.getByPlaceholder('Search...').fill('zzz_nonexistent_xyz');
 await expect(page.getByText('No data available')).toBeVisible({ timeout: 5000 });
-```
 
-Reset:
-```typescript
-await page.getByPlaceholder('Search entities...').fill('');
+// Reset
+await page.getByPlaceholder('Search...').fill('');
 await expect(page.getByText('No data available')).not.toBeVisible({ timeout: 5000 });
 ```
 
 ### Column Sorting
-Sort cycles: asc → desc → none. Active sort shows blue, inactive shows gray:
 ```typescript
-// Click to sort ascending
 await page.getByRole('columnheader', { name: /Name/i }).click();
 await expect(page.getByRole('columnheader', { name: /Name/i }).locator('span.text-blue-600')).toBeVisible();
 
-// Click again for descending
-await page.getByRole('columnheader', { name: /Name/i }).click();
+await page.getByRole('columnheader', { name: /Name/i }).click(); // desc
 await expect(page.getByRole('columnheader', { name: /Name/i }).locator('span.text-blue-600')).toBeVisible();
 
-// Click again to clear
-await page.getByRole('columnheader', { name: /Name/i }).click();
+await page.getByRole('columnheader', { name: /Name/i }).click(); // clear
 await expect(page.getByRole('columnheader', { name: /Name/i }).locator('span.text-gray-400')).toBeVisible();
 ```
 
-### Pagination & Page Size
+### Page Size with waitForResponse
+**Always wait for the API response** after changing page size to avoid race conditions:
 ```typescript
-// Pagination info
-await expect(page.getByText(/Showing \d+-\d+ of \d+ items/)).toBeVisible();
-await expect(page.getByLabel('Items per page:')).toBeVisible();
-
-// Change page size
 const pageSizeSelect = page.getByLabel('Items per page:');
 await expect(pageSizeSelect).toHaveValue('10');
+
+const responsePromise = page.waitForResponse(resp => resp.url().includes('/entity') && resp.status() === 200);
 await pageSizeSelect.selectOption('5');
+await responsePromise;
 await expect(pageSizeSelect).toHaveValue('5');
-const rows = page.getByRole('row');
-const count = await rows.count();
-expect(count).toBeLessThanOrEqual(6); // header + max 5
-```
-
-### Data Row Count
-Verify table has data (more than just the header row):
-```typescript
-const rows = page.getByRole('row');
-await expect(rows).not.toHaveCount(1);
-```
-
-### Active Toggle (Edit Only)
-Some entities show an active toggle only on edit, not on create:
-```typescript
-// Create modal — no toggle
-await page.getByRole('button', { name: 'Add Entity' }).click();
-await expect(page.getByRole('switch')).not.toBeVisible();
-
-// Edit modal — has toggle
-await page.getByRole('row').nth(1).getByRole('button', { name: 'Edit' }).click();
-await expect(page.getByRole('switch')).toBeVisible();
-```
-
-### Dynamic Rows (e.g., Bank Accounts)
-```typescript
-// Add rows
-await page.getByRole('button', { name: '+ Add Bank Account' }).click();
-await expect(page.getByPlaceholder('Account Name')).toHaveCount(1);
-await page.getByRole('button', { name: '+ Add Bank Account' }).click();
-await expect(page.getByPlaceholder('Account Name')).toHaveCount(2);
-
-// Remove first row
-await page.getByRole('button', { name: 'Remove' }).first().click();
-await expect(page.getByPlaceholder('Account Name')).toHaveCount(1);
+await expect(page.getByRole('row')).toHaveCount(6, { timeout: 5000 }); // header + 5
 ```
 
 ### Toast Messages
-Toast assertions always use `{ timeout: 10000 }`:
+Always `{ timeout: 10000 }`:
 ```typescript
-await expect(page.getByText('Category created successfully')).toBeVisible({ timeout: 10000 });
-await expect(page.getByText('Supplier updated successfully')).toBeVisible({ timeout: 10000 });
+await expect(page.getByText('created successfully')).toBeVisible({ timeout: 10000 });
+await expect(page.getByText('updated successfully')).toBeVisible({ timeout: 10000 });
 await expect(page.getByText(/has been deleted/)).toBeVisible({ timeout: 10000 });
 ```
 
-### Modal Close Verification
-After modal actions, verify it closed:
+### Data Row Count
 ```typescript
-// After successful submit
-await expect(page.getByLabel('Name')).not.toBeVisible();
-// OR verify by heading
-await expect(page.getByRole('heading', { name: 'Create Supplier' })).not.toBeVisible();
+await expect(page.getByRole('row')).not.toHaveCount(1); // more than header
 ```
 
-### Navigation Assertions (Auth Pages)
+### Active Toggle / Status Field (Edit Only)
 ```typescript
-await expect(page).toHaveURL('/dashboard', { timeout: 10000 });
-await expect(page).toHaveURL('/login'); // no timeout for current page
+// Create modal — no status
+await page.getByRole('button', { name: 'Create' }).click();
+await expect(page.getByLabel('Status')).not.toBeVisible();
+await page.getByRole('button', { name: 'Cancel' }).click();
+
+// Edit modal — has status
+await page.getByRole('row').nth(1).getByRole('button', { name: 'Edit' }).click();
+await expect(page.getByLabel('Status')).toBeVisible();
+```
+
+---
+
+## Preventing Common Failures
+
+### Strict Mode Violations
+When a selector matches multiple elements:
+
+```typescript
+// BAD — "Admin" might match multiple cells
+await expect(page.getByRole('cell', { name: cellText })).toBeVisible();
+
+// GOOD — use exact + first
+await expect(page.getByRole('cell', { name: cellText, exact: true }).first()).toBeVisible();
+```
+
+Scope actions to a specific row:
+```typescript
+// BAD — "Edit" button exists in every row
+await page.getByRole('button', { name: 'Edit' }).click();
+
+// GOOD — scope to the row containing our data
+const row = page.getByRole('row').filter({ hasText: userName });
+await row.getByRole('button', { name: 'Edit' }).click();
+```
+
+### Multi-Step Tests
+Use `test.slow()` for tests that create data before acting on it:
+```typescript
+test('should update a user', async ({ page }) => {
+  test.slow(); // 3x default timeout
+  // create → search → edit → assert
+});
+```
+
+### Overlapping Labels
+Use `{ exact: true }` when labels are substrings of each other:
+```typescript
+// BAD — matches both "Password" and "Confirm Password"
+await page.getByLabel('Password').fill('test');
+
+// GOOD
+await page.getByLabel('Password', { exact: true }).fill('test');
+await page.getByLabel('Confirm Password').fill('test');
+```
+
+### Reading Cell Data (column index varies by page)
+```typescript
+// ID at index 0, Name at index 1 (category), Name at index 2 (users — after ID and Profile)
+const firstRow = page.getByRole('row').nth(1);
+const name = await firstRow.getByRole('cell').nth(1).textContent(); // adjust index per page
 ```
 
 ---
@@ -354,51 +359,43 @@ await expect(page).toHaveURL('/login'); // no timeout for current page
 | Context | Timeout |
 |---|---|
 | Page load / heading visible | `{ timeout: 10000 }` |
-| API operations (create, update, delete toasts) | `{ timeout: 10000 }` |
+| API operations (create/update/delete toasts) | `{ timeout: 10000 }` |
 | Redirects (login → dashboard) | `{ timeout: 10000 }` |
-| Search debounce (filter, empty state, reset) | `{ timeout: 5000 }` |
-| Immediate UI (modals, buttons, form elements) | No explicit timeout needed |
+| Search debounce | `{ timeout: 5000 }` |
+| Page size row count | `{ timeout: 5000 }` |
+| Immediate UI (modals, buttons) | No explicit timeout |
 
-### Selector Priority (most reliable first)
-1. `getByRole('button', { name: '...' })` — buttons, links, headings
+### Selector Priority
+1. `getByRole('button', { name })` — buttons, links, headings
 2. `getByLabel('...')` — form inputs with labels
-3. `getByPlaceholder('...')` — search inputs, textarea placeholders
-4. `getByText('...')` — visible text content
-5. `getByRole('row')` / `getByRole('cell', { name: '...' })` — table elements
+3. `getByPlaceholder('...')` — search inputs
+4. `getByText('...')` — visible text
+5. `getByRole('row')` / `getByRole('cell', { name })` — table elements
 6. `getByRole('columnheader', { name: /regex/i })` — column headers
-7. `locator('span.text-blue-600')` / `locator('strong', ...)` — CSS-based (last resort)
+7. `page.getByRole('row').filter({ hasText })` — scope to specific row
+8. `locator('span.text-blue-600')` — CSS-based (last resort)
 
 ### Naming
-- Test files: `{page}.spec.ts` (e.g., `category.spec.ts`, `purchase-order.spec.ts`)
-- Test data: `Test Category ${Date.now()}`, `Edit Me ${Date.now()}`, `Delete Me ${Date.now()}`
-- Describe blocks: page/feature name (e.g., `'Master Category'`, `'Login Page'`)
-- Test names: `'should ...'` format
+- Files: `{page}.spec.ts` (e.g., `category.spec.ts`, `users.spec.ts`)
+- Data: `Test Entity ${Date.now()}`, `Edit Me ${Date.now()}`, `Delete Me ${Date.now()}`
+- Describe: page name (e.g., `'Master Category'`, `'Settings Users'`)
+- Tests: `'should ...'` format
 
 ### Test Independence
-- Each test must be independent — no relying on state from other tests
-- For edit/delete tests, create fresh data within the test itself
-- Use `test.describe.serial()` only when order genuinely matters
-
-### Other
-- Use `{ exact: true }` on selectors when labels overlap (e.g., `'Password'` vs `'Confirm Password'`)
-- Use `.nth(1)` to skip the header row when accessing table data rows
-- Use `getByRole('row').nth(1).getByRole('cell').nth(1)` to read first data cell
-- Avoid hardcoding IDs — always find elements by visible text/role
+- Each test is independent — no relying on state from other tests
+- For edit/delete: create fresh data within the test (Create-Search-Act)
+- For state-dependent features: create prerequisite state within the test
 
 ---
 
 ## Running Tests
 ```bash
-# Docker (recommended)
-docker compose --profile test run --rm e2e
-
-# Locally
-cd e2e && npm test                               # all tests headless
-cd e2e && npx playwright test tests/{feature}/{page}.spec.ts  # single file
-cd e2e && npx playwright test -g "test name"     # single test by name
-cd e2e && npm run test:headed                    # with visible browser
-cd e2e && npm run test:debug                     # step-by-step debugger
-cd e2e && npm run report                         # view HTML report
+cd e2e && npm test                                                    # all
+cd e2e && npx playwright test tests/{feature}/{page}.spec.ts          # single file
+cd e2e && npx playwright test -g "test name"                          # single test
+cd e2e && npm run test:headed                                         # visible browser
+cd e2e && npm run test:debug                                          # step debugger
+docker compose --profile test run --rm e2e                            # Docker
 ```
 
 ## Existing Helpers
