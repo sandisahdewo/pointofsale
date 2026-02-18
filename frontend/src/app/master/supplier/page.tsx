@@ -360,8 +360,9 @@ export default function MasterSupplierPage() {
           />
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Address</label>
+            <label htmlFor="supplier-address" className="block text-sm font-medium text-gray-700 mb-1">Address</label>
             <textarea
+              id="supplier-address"
               placeholder="Supplier address"
               value={formAddress}
               onChange={(e) => {
